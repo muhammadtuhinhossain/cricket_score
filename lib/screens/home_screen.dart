@@ -1,0 +1,331 @@
+import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:provider/provider.dart';
+import 'package:intl/intl.dart';
+import '../models/models.dart';
+import '../provider/app_provider.dart';
+import '../utils/theme.dart';
+import 'new_match_screen.dart';
+import 'scoring_screen.dart';
+import 'scoreboard_screen.dart';
+import 'teams_screen.dart';
+import 'tournaments_screen.dart';
+
+class HomeScreen extends StatefulWidget {
+  const HomeScreen({super.key});
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  int _tab = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Row(children: [
+          const Icon(Icons.sports_cricket, color: Colors.white),
+          const SizedBox(width: 8),
+          Text('Cricket Scorer',
+              style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
+        ]),
+        actions: [
+          if (_tab == 0)
+            IconButton(
+              icon: const Icon(Icons.archive_outlined),
+              tooltip: 'Archive',
+              onPressed: () => Navigator.push(context,
+                  MaterialPageRoute(builder: (_) => const _ArchiveScreen())),
+            ),
+        ],
+      ),
+      body: IndexedStack(
+        index: _tab,
+        children: const [
+          _MatchListTab(),
+          TournamentsScreen(),
+          TeamsScreen(),
+        ],
+      ),
+      bottomNavigationBar: BottomNavigationBar(
+        currentIndex: _tab,
+        onTap: (i) => setState(() => _tab = i),
+        items: const [
+          BottomNavigationBarItem(
+              icon: Icon(Icons.sports_cricket), label: 'Matches'),
+          BottomNavigationBarItem(
+              icon: Icon(Icons.emoji_events), label: 'Tournaments'),
+          BottomNavigationBarItem(
+              icon: Icon(Icons.group), label: 'Teams'),
+        ],
+      ),
+
+      floatingActionButton: _tab == 0
+          ? FloatingActionButton.extended(
+        heroTag: 'home_new_match_fab',
+        backgroundColor: AppTheme.primary,
+        onPressed: () => Navigator.push(context,
+            MaterialPageRoute(builder: (_) => const NewMatchScreen())),
+        icon: const Icon(Icons.add, color: Colors.white),
+        label: Text('New Match',
+            style: GoogleFonts.poppins(
+                color: Colors.white, fontWeight: FontWeight.w600)),
+      )
+          : null,
+      floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
+    );
+  }
+}
+
+
+// match list tab
+
+class _MatchListTab extends StatelessWidget {
+  const _MatchListTab();
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<AppProvider>(builder: (ctx, provider, _) {
+      final matches = provider.recentMatches;
+      if (matches.isEmpty) return _EmptyMatches();
+      return ListView.builder(
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 80),
+        itemCount: matches.length,
+        itemBuilder: (_, i) =>
+            _MatchCard(match: matches[i], provider: provider),
+      );
+    });
+  }
+}
+
+class _MatchCard extends StatelessWidget {
+  final CricketMatch match;
+  final AppProvider provider;
+  const _MatchCard({required this.match, required this.provider});
+
+  @override
+  Widget build(BuildContext context) {
+    final hostTeam = provider.getTeam(match.hostTeamId);
+    final visitorTeam = provider.getTeam(match.visitorTeamId);
+    final isLive = match.status == MatchStatus.inProgress;
+    final isCompleted = match.status == MatchStatus.completed;
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () {
+          if (isLive) {
+            Navigator.push(context, MaterialPageRoute(
+                builder: (_) => ScoringScreen(matchId: match.id)));
+          } else {
+            Navigator.push(context, MaterialPageRoute(
+                builder: (_) => ScoreboardScreen(matchId: match.id)));
+          }
+        },
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              if (isLive) ...[
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                      color: Colors.red, borderRadius: BorderRadius.circular(4)),
+                  child: const Row(children: [
+                    Icon(Icons.circle, size: 8, color: Colors.white),
+                    SizedBox(width: 4),
+                    Text('LIVE', style: TextStyle(
+                        color: Colors.white, fontSize: 10,
+                        fontWeight: FontWeight.bold)),
+                  ]),
+                ),
+              ],
+              const Spacer(),
+              Text(DateFormat('d MMM, HH:mm').format(match.createdAt),
+                  style: const TextStyle(
+                      fontSize: 11, color: AppTheme.textSecondary)),
+              PopupMenuButton<String>(
+                icon: const Icon(Icons.more_vert, size: 18),
+                onSelected: (v) {
+                  if (v == 'archive') provider.archiveMatch(match.id);
+                  if (v == 'delete') provider.deleteMatch(match.id);
+                },
+                itemBuilder: (_) => [
+                  const PopupMenuItem(value: 'archive', child: Text('Archive')),
+                  const PopupMenuItem(value: 'delete',
+                      child: Text('Delete', style: TextStyle(color: Colors.red))),
+                ],
+              ),
+            ]),
+            const SizedBox(height: 8),
+            Row(children: [
+              Expanded(child: _TeamScore(
+                teamName: hostTeam?.name ?? 'Host',
+                innings: _getTeamInnings(match, match.hostTeamId),
+                isBatting: match.currentInnings?.teamId == match.hostTeamId,
+                color: AppTheme.host,
+              )),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: Text('vs',
+                    style: TextStyle(
+                        color: AppTheme.textSecondary,
+                        fontWeight: FontWeight.w500)),
+              ),
+              Expanded(child: _TeamScore(
+                teamName: visitorTeam?.name ?? 'Visitor',
+                innings: _getTeamInnings(match, match.visitorTeamId),
+                isBatting: match.currentInnings?.teamId == match.visitorTeamId,
+                color: AppTheme.visitor,
+                alignRight: true,
+              )),
+            ]),
+            if (isCompleted && match.resultDescription != null) ...[
+              const SizedBox(height: 8),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: AppTheme.primary.withOpacity(0.08),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(match.resultDescription!,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                        color: AppTheme.primary,
+                        fontWeight: FontWeight.w600, fontSize: 12)),
+              ),
+            ],
+            if (isLive || isCompleted) ...[
+              const SizedBox(height: 12),
+              Row(children: [
+                if (isLive)
+                  Expanded(child: ElevatedButton.icon(
+                    icon: const Icon(Icons.sports_cricket, size: 16),
+                    label: const Text('Resume'),
+                    style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        textStyle: const TextStyle(fontSize: 13)),
+                    onPressed: () => Navigator.push(context,
+                        MaterialPageRoute(builder: (_) =>
+                            ScoringScreen(matchId: match.id))),
+                  )),
+                if (isLive) const SizedBox(width: 8),
+                Expanded(child: OutlinedButton.icon(
+                  icon: const Icon(Icons.list_alt, size: 16, color: AppTheme.primary),
+                  label: const Text('Scoreboard',
+                      style: TextStyle(color: AppTheme.primary)),
+                  style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      textStyle: const TextStyle(fontSize: 13)),
+                  onPressed: () => Navigator.push(context,
+                      MaterialPageRoute(builder: (_) =>
+                          ScoreboardScreen(matchId: match.id))),
+                )),
+              ]),
+            ],
+          ]),
+        ),
+      ),
+    );
+  }
+
+  Innings? _getTeamInnings(CricketMatch match, String teamId) {
+    if (match.firstInnings?.teamId == teamId) return match.firstInnings;
+    if (match.secondInnings?.teamId == teamId) return match.secondInnings;
+    return null;
+  }
+}
+
+class _TeamScore extends StatelessWidget {
+  final String teamName;
+  final Innings? innings;
+  final bool isBatting;
+  final Color color;
+  final bool alignRight;
+  const _TeamScore({
+    required this.teamName,
+    required this.innings,
+    required this.isBatting,
+    required this.color,
+    this.alignRight = false,
+  });
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment:
+    alignRight ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+    children: [
+      Row(
+        mainAxisAlignment:
+        alignRight ? MainAxisAlignment.end : MainAxisAlignment.start,
+        children: [
+          if (isBatting && !alignRight) ...[
+            Icon(Icons.sports_cricket, size: 12, color: color),
+            const SizedBox(width: 4),
+          ],
+          Flexible(child: Text(teamName,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontWeight: FontWeight.w600,
+                  fontSize: 14, color: color))),
+          if (isBatting && alignRight) ...[
+            const SizedBox(width: 4),
+            Icon(Icons.sports_cricket, size: 12, color: color),
+          ],
+        ],
+      ),
+      if (innings != null)
+        Text(
+          '${innings!.totalRuns}/${innings!.wickets}'
+              ' (${innings!.completedOvers}.${innings!.ballsInCurrentOver})',
+          style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 16),
+          textAlign: alignRight ? TextAlign.right : TextAlign.left,
+        )
+      else
+        Text('Yet to bat',
+            style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+            textAlign: alignRight ? TextAlign.right : TextAlign.left),
+    ],
+  );
+}
+
+class _EmptyMatches extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) => Center(
+    child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+      Icon(Icons.sports_cricket, size: 80, color: Colors.grey.shade300),
+      const SizedBox(height: 16),
+      Text('No matches yet', style: GoogleFonts.poppins(
+          fontSize: 20, fontWeight: FontWeight.w500,
+          color: AppTheme.textSecondary)),
+      const SizedBox(height: 8),
+      Text('Tap + to start a new match',
+          style: GoogleFonts.poppins(color: AppTheme.textSecondary)),
+    ]),
+  );
+}
+
+class _ArchiveScreen extends StatelessWidget {
+  const _ArchiveScreen();
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<AppProvider>(builder: (ctx, provider, _) {
+      final matches = provider.archivedMatches;
+      return Scaffold(
+        appBar: AppBar(title: const Text('Archived Matches')),
+        body: matches.isEmpty
+            ? Center(child: Text('No archived matches',
+            style: GoogleFonts.poppins(color: AppTheme.textSecondary)))
+            : ListView.builder(
+          padding: const EdgeInsets.all(12),
+          itemCount: matches.length,
+          itemBuilder: (_, i) =>
+              _MatchCard(match: matches[i], provider: provider),
+        ),
+      );
+    });
+  }
+}
