@@ -142,9 +142,10 @@ class _ScoringScreenState extends State<ScoringScreen> {
                     match: match,
                     innings: innings,
                     provider: provider,
-                    onWicket: ({bool showBowlerAfter = false}) =>
+                    onWicket: ({bool showBowlerAfter = false, String? outBatsmanId}) =>
                         _showWicketDialog(context, provider, match, innings,
-                            showBowlerAfter: showBowlerAfter),
+                            showBowlerAfter: showBowlerAfter,
+                            outBatsmanId: outBatsmanId),
                     onOverEnd: () => _showChangeBowlerDialog(context, provider, match),
                     onMilestone: (text) {
                       setState(() => _milestoneText = text);
@@ -494,17 +495,24 @@ class _ScoringScreenState extends State<ScoringScreen> {
   }
 
   void _showWicketDialog(BuildContext context, AppProvider provider,
-      CricketMatch match, Innings innings, {bool showBowlerAfter = false}) {
+      CricketMatch match, Innings innings, {bool showBowlerAfter = false, String? outBatsmanId}) {
 
     final battingTeamPlayers =
     provider.getTeamPlayersForMatch(innings.teamId, match);
-    // striker out হচ্ছে, non-striker মাঠে আছে, reserve বাদ
+
+    // out batsman — run out এ selected batsman, নাহলে striker
+    final actualOutId = outBatsmanId ?? innings.strikerBatsmanId;
+    // মাঠে যে থাকবে — out বাদে অন্যজন
+    final remainingOnField = [innings.strikerBatsmanId, innings.nonStrikerBatsmanId]
+        .where((id) => id != null && id != actualOutId)
+        .toList();
+
     final available = battingTeamPlayers
         .where((p) =>
     !p.isOut &&
         !p.isReserve &&
-        p.id != innings.strikerBatsmanId &&
-        p.id != innings.nonStrikerBatsmanId)
+        p.id != actualOutId &&
+        !remainingOnField.contains(p.id))
         .toList();
 
     // আর কেউ নেই — all out, dialog দেখানোর দরকার নেই
@@ -523,8 +531,8 @@ class _ScoringScreenState extends State<ScoringScreen> {
                 .where((p) =>
             !p.isOut &&
                 !p.isReserve &&
-                p.id != innings.strikerBatsmanId &&
-                p.id != innings.nonStrikerBatsmanId)
+                p.id != actualOutId &&
+                !remainingOnField.contains(p.id))
                 .toList();
 
             void addBatsman() {
@@ -613,7 +621,7 @@ class _ScoringScreenState extends State<ScoringScreen> {
                 ElevatedButton(
                   onPressed: () {
                     if (nextBatsman != null) {
-                      provider.setNextBatsman(nextBatsman!);
+                      provider.setNextBatsman(nextBatsman!, outBatsmanId: outBatsmanId);
                       Navigator.pop(ctx2);
                       // Hat-trick milestone — confirm then see
                       if (provider.wicketMilestone != null) {
@@ -1762,7 +1770,7 @@ class _ScoringPad extends StatefulWidget {
   final CricketMatch match;
   final Innings innings;
   final AppProvider provider;
-  final void Function({bool showBowlerAfter}) onWicket;
+  final void Function({bool showBowlerAfter, String? outBatsmanId}) onWicket;
   final VoidCallback onOverEnd;
   final ValueChanged<String> onMilestone;
 
@@ -1812,7 +1820,7 @@ class _ScoringPadState extends State<_ScoringPad> {
     _lastInningsTeamId = widget.innings.teamId;
   }
 
-  void _addBall(int runs, {bool isWicket = false, String? dismissalType, String? fielderId}) {
+  void _addBall(int runs, {bool isWicket = false, String? dismissalType, String? fielderId, String? outBatsmanId}) {
     if (widget.innings.strikerBatsmanId == null) return;
 
 
@@ -1846,13 +1854,18 @@ class _ScoringPadState extends State<_ScoringPad> {
     final over =
         '${innings.completedOvers}.${innings.ballsInCurrentOver + 1}';
 
+    // Run Out এ outBatsmanId use করো, বাকি সব এ striker
+    final effectiveBatsmanId = (dismissalType == 'Run Out' && outBatsmanId != null)
+        ? outBatsmanId
+        : innings.strikerBatsmanId;
+
     final event = BallEvent(
       type: type,
       runs: runs,
       dismissalType: (effectiveIsWicket || isNoBallRunOut) ? dismissalType : null,
       fielderId: (effectiveIsWicket || isNoBallRunOut) ? fielderId : null,
       bowlerId: innings.currentBowlerId,
-      batsmanId: innings.strikerBatsmanId,
+      batsmanId: effectiveBatsmanId,
       overNumber: over,
       isFreeHit: currentFreeHit,
     );
@@ -1886,7 +1899,7 @@ class _ScoringPadState extends State<_ScoringPad> {
 
     if (isNoBallRunOut || effectiveIsWicket) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        widget.onWicket(showBowlerAfter: overJustEnded);
+        widget.onWicket(showBowlerAfter: overJustEnded, outBatsmanId: effectiveBatsmanId);
       });
       return;
     }
@@ -2022,6 +2035,8 @@ class _ScoringPadState extends State<_ScoringPad> {
     String? catchFielderId;
     String? runOutFielderId;
     String? stumpedFielderId;
+    // Run Out এ কোন batsman out — striker বা non-striker
+    String? runOutBatsmanId = innings.strikerBatsmanId; // default striker
 
     bool needsFielder(String t) => t == 'Caught' || t == 'Run Out' || t == 'Stumped';
 
@@ -2091,6 +2106,99 @@ class _ScoringPadState extends State<_ScoringPad> {
                       if (selected == 'Stumped') stumpedFielderId = v;
                     }),
                   ),
+                  // Run Out এ কোন batsman out সেটা select করো
+                  if (selected == 'Run Out') ...[
+                    const SizedBox(height: 12),
+                    Text('Out Batsman',
+                        style: GoogleFonts.poppins(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 13,
+                            color: Colors.red)),
+                    const SizedBox(height: 8),
+                    // Striker
+                    GestureDetector(
+                      onTap: () => setS(() => runOutBatsmanId = innings.strikerBatsmanId),
+                      child: Container(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: runOutBatsmanId == innings.strikerBatsmanId
+                              ? Colors.red.withValues(alpha: 0.12)
+                              : Colors.grey.withValues(alpha: 0.07),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: runOutBatsmanId == innings.strikerBatsmanId
+                                ? Colors.red
+                                : Colors.grey.shade300,
+                            width: runOutBatsmanId == innings.strikerBatsmanId ? 2 : 1,
+                          ),
+                        ),
+                        child: Row(children: [
+                          Icon(Icons.sports_cricket,
+                              size: 16,
+                              color: runOutBatsmanId == innings.strikerBatsmanId
+                                  ? Colors.red : Colors.grey),
+                          const SizedBox(width: 8),
+                          Expanded(child: Text(
+                            provider.getPlayerById(innings.strikerBatsmanId ?? '', match)?.name ?? 'Striker',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              color: runOutBatsmanId == innings.strikerBatsmanId
+                                  ? Colors.red : AppTheme.textPrimary,
+                            ),
+                          )),
+                          Text('Striker',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: Colors.grey.shade500,
+                              )),
+                          if (runOutBatsmanId == innings.strikerBatsmanId)
+                            const Icon(Icons.check_circle, size: 18, color: Colors.red),
+                        ]),
+                      ),
+                    ),
+                    // Non-Striker
+                    GestureDetector(
+                      onTap: () => setS(() => runOutBatsmanId = innings.nonStrikerBatsmanId),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: runOutBatsmanId == innings.nonStrikerBatsmanId
+                              ? Colors.red.withValues(alpha: 0.12)
+                              : Colors.grey.withValues(alpha: 0.07),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: runOutBatsmanId == innings.nonStrikerBatsmanId
+                                ? Colors.red
+                                : Colors.grey.shade300,
+                            width: runOutBatsmanId == innings.nonStrikerBatsmanId ? 2 : 1,
+                          ),
+                        ),
+                        child: Row(children: [
+                          Icon(Icons.sports_cricket,
+                              size: 16,
+                              color: runOutBatsmanId == innings.nonStrikerBatsmanId
+                                  ? Colors.red : Colors.grey),
+                          const SizedBox(width: 8),
+                          Expanded(child: Text(
+                            provider.getPlayerById(innings.nonStrikerBatsmanId ?? '', match)?.name ?? 'Non-Striker',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              color: runOutBatsmanId == innings.nonStrikerBatsmanId
+                                  ? Colors.red : AppTheme.textPrimary,
+                            ),
+                          )),
+                          Text('Non-Striker',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: Colors.grey.shade500,
+                              )),
+                          if (runOutBatsmanId == innings.nonStrikerBatsmanId)
+                            const Icon(Icons.check_circle, size: 18, color: Colors.red),
+                        ]),
+                      ),
+                    ),
+                  ],
                 ],
               ]),
             ),
@@ -2130,7 +2238,8 @@ class _ScoringPadState extends State<_ScoringPad> {
                   _addBall(0,
                       isWicket: true,
                       dismissalType: selected,
-                      fielderId: fielderId);
+                      fielderId: fielderId,
+                      outBatsmanId: selected == 'Run Out' ? runOutBatsmanId : null);
                 },
                 child: const Text('Confirm Wicket'),
               ),

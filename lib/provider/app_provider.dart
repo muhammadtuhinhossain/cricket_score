@@ -369,12 +369,31 @@ class AppProvider extends ChangeNotifier {
   }
 
   Team _getOrCreateTeam(String name, List<String> playerNames) {
-    try {
-      return _teams.firstWhere(
-              (t) => t.name.toLowerCase() == name.toLowerCase());
-    } catch (_) {
+    final existing = _teams.firstWhereOrNull(
+            (t) => t.name.toLowerCase() == name.toLowerCase());
+
+    if (existing == null) {
       return createTeam(name, playerNames);
     }
+
+    // Team exist করে — নতুন player গুলো (যাদের নাম আগে নেই) team এ add করো
+    bool changed = false;
+    for (final pName in playerNames) {
+      final trimmed = pName.trim();
+      if (trimmed.isEmpty) continue;
+      final alreadyExists = existing.players.any(
+              (p) => p.name.toLowerCase() == trimmed.toLowerCase());
+      if (!alreadyExists) {
+        existing.players.add(Player(id: _uuid.v4(), name: trimmed));
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      _saveAsync();
+    }
+
+    return existing;
   }
 
   // new match advanced settings থেকে reserve update করে team এ save করো
@@ -481,11 +500,13 @@ class AppProvider extends ChangeNotifier {
       case BallType.noBall:
 
         if (event.dismissalType == 'Run Out') {
-          striker?.isOut = true;
+          final runOutBatsman = event.batsmanId != null
+              ? _findPlayer(allPlayers, event.batsmanId!) : striker;
+          runOutBatsman?.isOut = true;
           final fielderName = event.fielderId != null
               ? _findPlayer(allPlayers, event.fielderId!)?.name
               : null;
-          striker?.dismissalInfo = fielderName != null
+          runOutBatsman?.dismissalInfo = fielderName != null
               ? 'run out ($fielderName)'
               : 'run out';
           bowler?.noBalls++;
@@ -522,9 +543,12 @@ class AppProvider extends ChangeNotifier {
         break;
 
       case BallType.wicket:
-        striker?.balls++;
-        striker?.isOut = true;
-
+      // Run Out এ batsmanId দিয়ে correct batsman বের করো (striker বা non-striker)
+        final outBatsman = (event.dismissalType == 'Run Out' && event.batsmanId != null)
+            ? _findPlayer(allPlayers, event.batsmanId!)
+            : striker;
+        outBatsman?.balls++;
+        outBatsman?.isOut = true;
 
         final allPlayers2 = _getAllPlayersForMatch(match);
         final fielderName = event.fielderId != null
@@ -570,7 +594,7 @@ class AppProvider extends ChangeNotifier {
             dismissalStr = dtype;
         }
 
-        striker?.dismissalInfo = dismissalStr;
+        outBatsman?.dismissalInfo = dismissalStr;
         final prevWickets = bowler?.wickets ?? 0;
         bowler?.wickets++;
         bowler?.runsConceded += event.runs;
@@ -709,9 +733,21 @@ class AppProvider extends ChangeNotifier {
   }
 
   void renameTempPlayer(String playerId, String newName, CricketMatch match) {
+    // tempPlayers এ rename করো
     final all = _getAllPlayersForMatch(match);
     final p = _findPlayer(all, playerId);
     if (p != null) p.name = newName;
+
+    // Team এও permanently rename করো
+    for (final team in _teams) {
+      for (final tp in team.players) {
+        if (tp.id == playerId) {
+          tp.name = newName;
+          break;
+        }
+      }
+    }
+
     _saveAsync();
     notifyListeners();
   }
@@ -734,7 +770,7 @@ class AppProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  void setNextBatsman(String playerId) {
+  void setNextBatsman(String playerId, {String? outBatsmanId}) {
     final innings = _activeMatch?.currentInnings;
     if (innings == null) return;
 
@@ -742,11 +778,24 @@ class AppProvider extends ChangeNotifier {
       innings.battingOrder.add(playerId);
     }
 
+    // nonStriker run out হয়েছে কিনা check করো
+    final isNonStrikerOut = outBatsmanId != null &&
+        outBatsmanId == innings.nonStrikerBatsmanId;
+
     // nonStrikerBatsmanId null মানে over শেষে wicket হয়েছে
     // তখন নতুন batsman nonStriker হবে, striker আগেই set হয়েছে
     if (innings.nonStrikerBatsmanId == null) {
       innings.nonStrikerBatsmanId = playerId;
-      // partnership: striker (আগের nonStriker) + নতুন nonStriker
+      final striker = innings.strikerBatsmanId;
+      if (striker != null && striker != playerId) {
+        innings.partnerships.add(Partnership(
+          batsman1Id: striker,
+          batsman2Id: playerId,
+        ));
+      }
+    } else if (isNonStrikerOut) {
+      // Non-striker run out — নতুন batsman nonStriker হবে, striker একই থাকবে
+      innings.nonStrikerBatsmanId = playerId;
       final striker = innings.strikerBatsmanId;
       if (striker != null && striker != playerId) {
         innings.partnerships.add(Partnership(
@@ -755,7 +804,7 @@ class AppProvider extends ChangeNotifier {
         ));
       }
     } else {
-      // সাধারণ wicket — নতুন batsman striker হবে
+      // সাধারণ wicket — striker out, নতুন batsman striker হবে
       innings.strikerBatsmanId = playerId;
       final nonStriker = innings.nonStrikerBatsmanId;
       if (nonStriker != null && nonStriker != playerId) {
