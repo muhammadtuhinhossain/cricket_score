@@ -1,93 +1,137 @@
+import 'dart:io';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:path_provider/path_provider.dart';
 import '../models/models.dart';
 import '../provider/app_provider.dart';
 import '../utils/theme.dart';
 
 
-class ScoreboardScreen extends StatelessWidget {
+class ScoreboardScreen extends StatefulWidget {
   final String matchId;
   const ScoreboardScreen({super.key, required this.matchId});
 
   @override
+  State<ScoreboardScreen> createState() => _ScoreboardScreenState();
+}
+
+class _ScoreboardScreenState extends State<ScoreboardScreen> {
+  final GlobalKey _captureKey = GlobalKey();
+  bool _isCapturing = false;
+
+  @override
   Widget build(BuildContext context) {
     return Consumer<AppProvider>(builder: (ctx, provider, _) {
-      final match = provider.matches.firstWhere((m) => m.id == matchId);
-      final hostTeam = provider.getTeam(match.hostTeamId);
-      final visitorTeam = provider.getTeam(match.visitorTeamId);
+      final match = provider.matches.firstWhere((m) => m.id == widget.matchId);
 
       return Scaffold(
         appBar: AppBar(
           title: const Text('Scoreboard'),
           actions: [
-            IconButton(
-              icon: const Icon(Icons.share),
-              onPressed: () => _shareScorecard(context, match, provider),
-            ),
+            if (_isCapturing)
+              const Padding(
+                padding: EdgeInsets.all(12),
+                child: SizedBox(
+                  width: 20, height: 20,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: Colors.white),
+                ),
+              )
+            else
+              IconButton(
+                icon: const Icon(Icons.share),
+                onPressed: () => _captureAndShare(match, provider),
+              ),
           ],
         ),
+        // RepaintBoundary টা SingleChildScrollView এর ভেতরে —
+        // এতে পুরো content (scroll করা অংশ সহ) একসাথে capture হবে
         body: SingleChildScrollView(
-          padding: const EdgeInsets.all(12),
-          child: Column(children: [
-            if (match.resultDescription != null)
-              _ResultBanner(match.resultDescription!),
-            _TossInfo(match: match, provider: provider),
-            if (match.firstInnings != null)
-              _InningsCard(
-                innings: match.firstInnings!,
-                match: match,
-                provider: provider,
-                label: '1st Innings',
+          child: RepaintBoundary(
+            key: _captureKey,
+            child: Container(
+              color: Colors.white,
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                children: [
+                  if (match.resultDescription != null)
+                    _ResultBanner(match.resultDescription!),
+                  _TossInfo(match: match, provider: provider),
+                  if (match.firstInnings != null)
+                    _InningsCard(
+                      innings: match.firstInnings!,
+                      match: match,
+                      provider: provider,
+                      label: '1st Innings',
+                    ),
+                  if (match.secondInnings != null)
+                    _InningsCard(
+                      innings: match.secondInnings!,
+                      match: match,
+                      provider: provider,
+                      label: '2nd Innings',
+                    ),
+                  if (match.status == MatchStatus.inProgress)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      child: ElevatedButton.icon(
+                        icon: const Icon(Icons.play_arrow),
+                        label: const Text('Resume Scoring'),
+                        onPressed: () => Navigator.pop(context),
+                      ),
+                    ),
+                ],
               ),
-            if (match.secondInnings != null)
-              _InningsCard(
-                innings: match.secondInnings!,
-                match: match,
-                provider: provider,
-                label: '2nd Innings',
-              ),
-            if (match.status == MatchStatus.inProgress)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                child: ElevatedButton.icon(
-                  icon: const Icon(Icons.play_arrow),
-                  label: const Text('Resume Scoring'),
-                  onPressed: () => Navigator.pop(context),
-                ),
-              ),
-          ]),
+            ),
+          ),
         ),
       );
     });
   }
 
-  void _shareScorecard(BuildContext context, CricketMatch match, AppProvider provider) {
-    final buffer = StringBuffer();
-    final hostTeam = provider.getTeam(match.hostTeamId);
-    final visitorTeam = provider.getTeam(match.visitorTeamId);
-    buffer.writeln('🏏 Cricket Scorecard');
-    buffer.writeln('${hostTeam?.name} vs ${visitorTeam?.name}');
-    if (match.firstInnings != null) {
-      final i = match.firstInnings!;
-      final team = provider.getTeam(i.teamId);
-      buffer.writeln('\n${team?.name}: ${i.totalRuns}/${i.wickets} (${i.completedOvers}.${i.ballsInCurrentOver} ov)');
+  Future<void> _captureAndShare(
+      CricketMatch match, AppProvider provider) async {
+    setState(() => _isCapturing = true);
+    try {
+      await Future.delayed(const Duration(milliseconds: 200));
+
+      final boundary = _captureKey.currentContext?.findRenderObject()
+      as RenderRepaintBoundary?;
+      if (boundary == null) return;
+
+      final image = await boundary.toImage(pixelRatio: 2.0);
+      final byteData =
+      await image.toByteData(format: ui.ImageByteFormat.png);
+      if (byteData == null) return;
+      final bytes = byteData.buffer.asUint8List();
+
+      final dir = await getTemporaryDirectory();
+      final hostTeam = provider.getTeam(match.hostTeamId);
+      final visitorTeam = provider.getTeam(match.visitorTeamId);
+      final fileName =
+      '${hostTeam?.name ?? 'team1'}_vs_${visitorTeam?.name ?? 'team2'}.png'
+          .replaceAll(' ', '_');
+      final file = File('${dir.path}/$fileName');
+      await file.writeAsBytes(bytes);
+
+      await Share.shareXFiles(
+        [XFile(file.path)],
+        text: '🏏 ${hostTeam?.name} vs ${visitorTeam?.name} - Scorecard',
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Share করতে সমস্যা হয়েছে')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isCapturing = false);
     }
-    if (match.secondInnings != null) {
-      final i = match.secondInnings!;
-      final team = provider.getTeam(i.teamId);
-      buffer.writeln('${team?.name}: ${i.totalRuns}/${i.wickets} (${i.completedOvers}.${i.ballsInCurrentOver} ov)');
-    }
-    if (match.resultDescription != null) {
-      buffer.writeln('\nResult: ${match.resultDescription}');
-    }
-    showDialog(context: context, builder: (_) => AlertDialog(
-      title: const Text('Share Scorecard'),
-      content: SelectableText(buffer.toString()),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close')),
-      ],
-    ));
   }
 }
 
@@ -130,8 +174,13 @@ class _TossInfo extends StatelessWidget {
         child: Row(children: [
           const Icon(Icons.monetization_on, color: AppTheme.accent),
           const SizedBox(width: 8),
-          Text('Toss: ${tossTeam?.name ?? '-'} won & elected to $decision',
-              style: GoogleFonts.poppins(fontSize: 13, color: AppTheme.textSecondary)),
+          Expanded(
+            child: Text(
+              'Toss: ${tossTeam?.name ?? '-'} won & elected to $decision',
+              style: GoogleFonts.poppins(fontSize: 13, color: AppTheme.textSecondary),
+              softWrap: true,
+            ),
+          ),
         ]),
       ),
     );
@@ -238,7 +287,6 @@ class _BattingTable extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Column(children: [
-      // Header
       Container(
         color: Colors.grey.shade100,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -271,7 +319,7 @@ class _BattingTable extends StatelessWidget {
         ]),
       ),
       Container(
-        color: AppTheme.primary.withOpacity(0.08),
+        color: AppTheme.primary.withValues(alpha: 0.08),
         padding: const EdgeInsets.all(12),
         child: Row(children: [
           Expanded(child: Text('Total', style: GoogleFonts.poppins(fontWeight: FontWeight.bold))),
@@ -305,7 +353,7 @@ class _BattingRow extends StatelessWidget {
   Widget build(BuildContext context) => Container(
     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
     decoration: BoxDecoration(
-      color: isStriker ? AppTheme.primary.withOpacity(0.05) : null,
+      color: isStriker ? AppTheme.primary.withValues(alpha: 0.05) : null,
     ),
     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
@@ -392,7 +440,6 @@ class _BowlingTable extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Column(children: [
-      // Header — widths must match _BowlingRow stats
       Container(
         color: Colors.grey.shade100,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -456,7 +503,21 @@ class _BowlingRowState extends State<_BowlingRow> {
     return overs;
   }
 
-  // each batsman for color
+  int _getActualOverNumber(List<BallEvent> overBalls) {
+    if (overBalls.isEmpty) return 0;
+    final firstBall = overBalls.first;
+    int legalBallCount = 0;
+    for (final b in widget.innings.ballEvents) {
+      if (b.type != BallType.wide && b.type != BallType.noBall) {
+        legalBallCount++;
+      }
+      if (b == firstBall) {
+        return ((legalBallCount - 1) ~/ 6) + 1;
+      }
+    }
+    return 0;
+  }
+
   static const List<Color> _batsmanColors = [
     Color(0xFFE53935), Color(0xFF1E88E5), Color(0xFF43A047),
     Color(0xFFFF8F00), Color(0xFF8E24AA), Color(0xFF00ACC1),
@@ -508,10 +569,9 @@ class _BowlingRowState extends State<_BowlingRow> {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: BoxDecoration(
-            color: widget.isCurrent ? AppTheme.primary.withOpacity(0.05) : null,
+            color: widget.isCurrent ? AppTheme.primary.withValues(alpha: 0.05) : null,
           ),
           child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-            // Avatar — same style as batting
             Container(
               width: 32, height: 32,
               decoration: BoxDecoration(
@@ -530,7 +590,6 @@ class _BowlingRowState extends State<_BowlingRow> {
               )),
             ),
             const SizedBox(width: 8),
-            // Name — Expanded + Flexible, same as batting
             Expanded(child: Row(children: [
               if (widget.isCurrent)
                 const Padding(padding: EdgeInsets.only(right: 3),
@@ -544,7 +603,6 @@ class _BowlingRowState extends State<_BowlingRow> {
               Icon(_expanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
                   size: 14, color: AppTheme.textSecondary),
             ])),
-            // Stats — widths match header exactly
             _dCell(widget.player.oversBowledDisplay, 36),
             _dCell('${widget.player.maidens}', 30),
             _dCell('${widget.player.runsConceded}', 30,
@@ -558,7 +616,6 @@ class _BowlingRowState extends State<_BowlingRow> {
         ),
       ),
 
-      // Over breakdown
       if (_expanded && overs.isNotEmpty)
         Container(
           margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
@@ -571,7 +628,6 @@ class _BowlingRowState extends State<_BowlingRow> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // ── Legend: player name + color dot ──
                   () {
                 final colorMap = _buildBatsmanColorMap(widget.innings.ballEvents);
                 return Padding(
@@ -599,9 +655,7 @@ class _BowlingRowState extends State<_BowlingRow> {
                   ),
                 );
               }(),
-              // ── Over rows ──
               ...overs.asMap().entries.map((entry) {
-                final overIdx = entry.key;
                 final balls = entry.value;
                 final colorMap = _buildBatsmanColorMap(widget.innings.ballEvents);
                 final overRuns = balls.fold<int>(0, (s, b) {
@@ -619,10 +673,10 @@ class _BowlingRowState extends State<_BowlingRow> {
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                         decoration: BoxDecoration(
-                          color: AppTheme.primary.withOpacity(0.1),
+                          color: AppTheme.primary.withValues(alpha: 0.1),
                           borderRadius: BorderRadius.circular(4),
                         ),
-                        child: Text('Ov ${overIdx + 1}',
+                        child: Text('Ov ${_getActualOverNumber(balls)}',
                             style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold,
                                 color: AppTheme.primary)),
                       ),
@@ -639,8 +693,8 @@ class _BowlingRowState extends State<_BowlingRow> {
                         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                         decoration: BoxDecoration(
                           color: hasWicket
-                              ? Colors.red.withOpacity(0.1)
-                              : AppTheme.primary.withOpacity(0.1),
+                              ? Colors.red.withValues(alpha: 0.1)
+                              : AppTheme.primary.withValues(alpha: 0.1),
                           borderRadius: BorderRadius.circular(4),
                         ),
                         child: Text('$overRuns${hasWicket ? ' W' : ''}',
@@ -705,7 +759,7 @@ class _BowlingRowState extends State<_BowlingRow> {
   }
 }
 
-// ── Fow ────
+// ── FOW ────
 
 class _FOWTable extends StatelessWidget {
   final Innings innings;

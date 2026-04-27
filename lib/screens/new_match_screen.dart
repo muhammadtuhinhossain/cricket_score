@@ -14,10 +14,9 @@ class NewMatchScreen extends StatefulWidget {
 
 class _NewMatchScreenState extends State<NewMatchScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _hostCtrl = TextEditingController(text: 'Host Team');
-  final _visitorCtrl = TextEditingController(text: 'Visitor Team');
-  MatchFormat _format = MatchFormat.t20;
-  int _overs = 20;
+  final _hostCtrl = TextEditingController();
+  final _visitorCtrl = TextEditingController();
+  final _oversCtrl = TextEditingController();
   String _tossWonBy = 'host';
   TossDecision _tossDecision = TossDecision.bat;
 
@@ -26,18 +25,66 @@ class _NewMatchScreenState extends State<NewMatchScreen> {
 
   late List<TextEditingController> _hostPlayers;
   late List<TextEditingController> _visitorPlayers;
+  final Set<int> _hostReserveIndices = {};
+  final Set<int> _visitorReserveIndices = {};
 
   @override
   void initState() {
     super.initState();
-    _hostPlayers = List.generate(11, (i) => TextEditingController(text: 'Player ${i + 1}'));
-    _visitorPlayers = List.generate(11, (i) => TextEditingController(text: 'Player ${i + 1}'));
+    _hostPlayers = List.generate(11, (i) => TextEditingController());
+    _visitorPlayers = List.generate(11, (i) => TextEditingController());
+
+    _hostCtrl.addListener(() => _onTeamNameChanged(_hostCtrl.text, isHost: true));
+    _visitorCtrl.addListener(() => _onTeamNameChanged(_visitorCtrl.text, isHost: false));
+  }
+
+  void _onTeamNameChanged(String name, {required bool isHost}) {
+    final provider = context.read<AppProvider>();
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) return;
+
+    Team? matched;
+    try {
+      matched = provider.teams.firstWhere(
+            (t) => t.name.toLowerCase() == trimmed.toLowerCase(),
+      );
+    } catch (_) {
+      matched = null;
+    }
+
+    if (matched == null) return;
+
+    setState(() {
+      final players = matched!.players;
+      final ctrls = isHost ? _hostPlayers : _visitorPlayers;
+      final reserveIndices = isHost ? _hostReserveIndices : _visitorReserveIndices;
+
+      for (final c in ctrls) {
+        c.dispose();
+      }
+      ctrls.clear();
+      reserveIndices.clear();
+
+      for (int i = 0; i < players.length; i++) {
+        ctrls.add(TextEditingController(text: players[i].name));
+        if (players[i].isReserve) {
+          reserveIndices.add(i);
+        }
+      }
+
+      if (isHost) {
+        _hostPlayerCount = ctrls.length;
+      } else {
+        _visitorPlayerCount = ctrls.length;
+      }
+    });
   }
 
   @override
   void dispose() {
     _hostCtrl.dispose();
     _visitorCtrl.dispose();
+    _oversCtrl.dispose();
     for (var c in [..._hostPlayers, ..._visitorPlayers]) {
       c.dispose();
     }
@@ -48,6 +95,8 @@ class _NewMatchScreenState extends State<NewMatchScreen> {
     if (!_formKey.currentState!.validate()) return;
     final provider = context.read<AppProvider>();
 
+    final overs = int.tryParse(_oversCtrl.text.trim()) ?? 20;
+
     final hostNames = _hostPlayers
         .map((c) => c.text.trim())
         .where((n) => n.isNotEmpty)
@@ -57,15 +106,43 @@ class _NewMatchScreenState extends State<NewMatchScreen> {
         .where((n) => n.isNotEmpty)
         .toList();
 
+    final hostReserve = _hostReserveIndices.toSet();
+    final visitorReserve = _visitorReserveIndices.toSet();
+
     final match = provider.createMatch(
       hostTeamName: _hostCtrl.text.trim(),
       visitorTeamName: _visitorCtrl.text.trim(),
       hostPlayerNames: hostNames,
       visitorPlayerNames: visitorNames,
-      format: _format,
-      totalOvers: _overs,
+      hostReserveIndices: hostReserve,
+      visitorReserveIndices: visitorReserve,
+      format: MatchFormat.custom,
+      totalOvers: overs,
       tossWonBy: _tossWonBy,
       tossDecision: _tossDecision,
+    );
+
+    // Advanced settings এ reserve mark করলে team এও player id দিয়ে save হবে
+    // host reserve player ids বের করো
+    final hostReserveIds = <String>{};
+    for (final idx in hostReserve) {
+      if (idx < match.tempHostPlayers.length) {
+        hostReserveIds.add(match.tempHostPlayers[idx].id);
+      }
+    }
+    final visitorReserveIds = <String>{};
+    for (final idx in visitorReserve) {
+      if (idx < match.tempVisitorPlayers.length) {
+        visitorReserveIds.add(match.tempVisitorPlayers[idx].id);
+      }
+    }
+    provider.syncReserveToTeamByIds(
+      teamId: match.hostTeamId,
+      reservePlayerIds: hostReserveIds,
+    );
+    provider.syncReserveToTeamByIds(
+      teamId: match.visitorTeamId,
+      reservePlayerIds: visitorReserveIds,
     );
 
     Navigator.pushReplacement(
@@ -76,6 +153,9 @@ class _NewMatchScreenState extends State<NewMatchScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final provider = context.watch<AppProvider>();
+    final teamNames = provider.teams.map((t) => t.name).toList();
+
     return Scaffold(
       backgroundColor: AppTheme.surface,
       appBar: AppBar(
@@ -90,11 +170,13 @@ class _NewMatchScreenState extends State<NewMatchScreen> {
             // ── Teams ──
             _sectionCard(
               'Teams',
-              Column(children: [
-                _teamField(_hostCtrl, 'Host Team'),
-                const SizedBox(height: 12),
-                _teamField(_visitorCtrl, 'Visitor Team'),
-              ]),
+              Column(
+                children: [
+                  _teamField(_hostCtrl, 'Host Team', teamNames),
+                  const SizedBox(height: 12),
+                  _teamField(_visitorCtrl, 'Visitor Team', teamNames),
+                ],
+              ),
             ),
             const SizedBox(height: 12),
 
@@ -126,37 +208,24 @@ class _NewMatchScreenState extends State<NewMatchScreen> {
             ),
             const SizedBox(height: 12),
 
-            // ── Format ──
+            // ── Overs ──
             _sectionCard(
-              'Format & Overs',
-              Column(children: [
-                Row(children: [
-                  Expanded(child: _formatChip(MatchFormat.t20, 'T20', 20)),
-                  const SizedBox(width: 8),
-                  Expanded(child: _formatChip(MatchFormat.odi, 'ODI', 50)),
-                  const SizedBox(width: 8),
-                  Expanded(child: _formatChip(MatchFormat.custom, 'Custom', _overs)),
-                ]),
-                if (_format == MatchFormat.custom) ...[
-                  const SizedBox(height: 12),
-                  Row(children: [
-                    const Text('Overs: '),
-                    Expanded(
-                      child: Slider(
-                        value: _overs.toDouble(),
-                        min: 1,
-                        max: 50,
-                        divisions: 49,
-                        label: '$_overs',
-                        onChanged: (v) => setState(() => _overs = v.toInt()),
-                      ),
-                    ),
-                    Text('$_overs',
-                        style: const TextStyle(
-                            fontWeight: FontWeight.bold, fontSize: 16)),
-                  ]),
-                ],
-              ]),
+              'Overs',
+              TextFormField(
+                controller: _oversCtrl,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  hintText: 'Overs (e.g. 6, 10, 20)',
+                  hintStyle: TextStyle(color: Colors.black26),
+                  prefixIcon:
+                  Icon(Icons.sports_cricket, color: AppTheme.primary),
+                ),
+                validator: (v) {
+                  final n = int.tryParse(v?.trim() ?? '');
+                  if (n == null || n < 1) return 'Valid over number দিন (min 1)';
+                  return null;
+                },
+              ),
             ),
             const SizedBox(height: 12),
 
@@ -177,6 +246,7 @@ class _NewMatchScreenState extends State<NewMatchScreen> {
                           _hostPlayers,
                           _hostPlayerCount,
                               (v) => setState(() => _hostPlayerCount = v),
+                          _hostReserveIndices,
                         ),
                         const SizedBox(height: 16),
                         _playersSection(
@@ -184,6 +254,7 @@ class _NewMatchScreenState extends State<NewMatchScreen> {
                           _visitorPlayers,
                           _visitorPlayerCount,
                               (v) => setState(() => _visitorPlayerCount = v),
+                          _visitorReserveIndices,
                         ),
                       ],
                     ),
@@ -228,16 +299,63 @@ class _NewMatchScreenState extends State<NewMatchScreen> {
     ),
   );
 
-  Widget _teamField(TextEditingController ctrl, String label) =>
-      TextFormField(
-        controller: ctrl,
-        decoration: InputDecoration(
-          labelText: label,
-          prefixIcon: const Icon(Icons.group, color: AppTheme.primary),
+  Widget _teamField(
+      TextEditingController ctrl, String hint, List<String> teamNames) {
+    return Autocomplete<String>(
+      optionsBuilder: (textEditingValue) {
+        final q = textEditingValue.text.trim().toLowerCase();
+        if (q.isEmpty) return const [];
+        return teamNames.where((n) => n.toLowerCase().contains(q));
+      },
+      onSelected: (selection) {
+        ctrl.text = selection;
+        // listener trigger হবে, players load হবে
+      },
+      fieldViewBuilder: (ctx, fieldCtrl, focusNode, onSubmit) {
+        // আমাদের ctrl এর সাথে sync রাখো
+        if (fieldCtrl.text != ctrl.text) fieldCtrl.text = ctrl.text;
+        fieldCtrl.addListener(() {
+          if (ctrl.text != fieldCtrl.text) ctrl.text = fieldCtrl.text;
+        });
+        return TextFormField(
+          controller: fieldCtrl,
+          focusNode: focusNode,
+          onFieldSubmitted: (_) => onSubmit(),
+          decoration: InputDecoration(
+            hintText: hint,
+            hintStyle: const TextStyle(color: Colors.black26),
+            prefixIcon: const Icon(Icons.group, color: AppTheme.primary),
+          ),
+          validator: (_) => ctrl.text.trim().isEmpty ? 'Required' : null,
+        );
+      },
+      optionsViewBuilder: (ctx, onSelected, options) => Align(
+        alignment: Alignment.topLeft,
+        child: Material(
+          elevation: 4,
+          borderRadius: BorderRadius.circular(8),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 200),
+            child: ListView.builder(
+              padding: EdgeInsets.zero,
+              shrinkWrap: true,
+              itemCount: options.length,
+              itemBuilder: (_, i) {
+                final opt = options.elementAt(i);
+                return ListTile(
+                  dense: true,
+                  leading: const Icon(Icons.group,
+                      size: 18, color: AppTheme.primary),
+                  title: Text(opt, style: const TextStyle(fontSize: 14)),
+                  onTap: () => onSelected(opt),
+                );
+              },
+            ),
+          ),
         ),
-        validator: (v) =>
-        v == null || v.trim().isEmpty ? 'Required' : null,
-      );
+      ),
+    );
+  }
 
   Widget _tossChip(String value, String label) {
     final selected = _tossWonBy == value;
@@ -289,41 +407,13 @@ class _NewMatchScreenState extends State<NewMatchScreen> {
     );
   }
 
-  Widget _formatChip(MatchFormat fmt, String label, int overs) {
-    final selected = _format == fmt;
-    return GestureDetector(
-      onTap: () => setState(() {
-        _format = fmt;
-        if (fmt != MatchFormat.custom) _overs = overs;
-      }),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 150),
-        padding: const EdgeInsets.symmetric(vertical: 10),
-        decoration: BoxDecoration(
-          color: selected ? AppTheme.primary : Colors.grey.shade100,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(
-              color: selected ? AppTheme.primary : Colors.grey.shade300),
-        ),
-        child: Center(
-          child: Text(label,
-              style: TextStyle(
-                  color: selected ? Colors.white : AppTheme.textSecondary,
-                  fontWeight:
-                  selected ? FontWeight.w600 : FontWeight.normal,
-                  fontSize: 13)),
-        ),
-      ),
-    );
-  }
-
   Widget _playersSection(
       String title,
       List<TextEditingController> ctrls,
       int count,
       ValueChanged<int> onCountChanged,
+      Set<int> reserveIndices,
       ) {
-
     final actualCount = ctrls.length;
 
     return Column(
@@ -334,7 +424,6 @@ class _NewMatchScreenState extends State<NewMatchScreen> {
                 fontWeight: FontWeight.w600,
                 color: AppTheme.textSecondary)),
         const SizedBox(height: 8),
-        // Player count control row
         Row(children: [
           const Text('Players: ',
               style: TextStyle(fontWeight: FontWeight.w500)),
@@ -343,9 +432,9 @@ class _NewMatchScreenState extends State<NewMatchScreen> {
                 color: AppTheme.primary),
             onPressed: actualCount > 1
                 ? () {
-
               final last = ctrls.removeLast();
               last.dispose();
+              reserveIndices.remove(actualCount - 1);
               onCountChanged(ctrls.length);
             }
                 : null,
@@ -358,35 +447,93 @@ class _NewMatchScreenState extends State<NewMatchScreen> {
                 color: AppTheme.primary),
             onPressed: actualCount < 15
                 ? () {
-              ctrls.add(TextEditingController(
-                  text: 'Player ${actualCount + 1}'));
+              ctrls.add(TextEditingController());
               onCountChanged(ctrls.length);
             }
                 : null,
           ),
         ]),
-        const SizedBox(height: 4),
-
-        ...List.generate(
-          ctrls.length,
-              (i) => Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: TextFormField(
-              controller: ctrls[i],
-              decoration: InputDecoration(
-                labelText: 'Player ${i + 1}',
-                isDense: true,
-                prefixIcon: CircleAvatar(
-                  radius: 14,
-                  backgroundColor: AppTheme.primary,
-                  child: Text('${i + 1}',
-                      style: const TextStyle(
-                          fontSize: 11, color: Colors.white)),
-                ),
+        Container(
+          padding:
+          const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: Colors.orange.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Row(children: [
+            const Icon(Icons.info_outline, size: 13, color: Colors.orange),
+            const SizedBox(width: 6),
+            const Expanded(
+              child: Text(
+                'Player এর পাশের "R" চাপলে সে Reserve হবে — match এ substitute হিসেবে আসবে',
+                style: TextStyle(fontSize: 11, color: Colors.orange),
               ),
             ),
-          ),
+          ]),
         ),
+        const SizedBox(height: 8),
+        ...List.generate(ctrls.length, (i) {
+          final isReserve = reserveIndices.contains(i);
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Row(children: [
+              Expanded(
+                child: TextFormField(
+                  controller: ctrls[i],
+                  decoration: InputDecoration(
+                    hintText: isReserve
+                        ? 'Player ${i + 1} (Reserve)'
+                        : 'Player ${i + 1}',
+                    hintStyle:
+                    const TextStyle(color: Colors.black26),
+                    isDense: true,
+                    filled: true,
+                    fillColor: isReserve
+                        ? Colors.orange.withValues(alpha: 0.06)
+                        : Colors.white,
+                    prefixIcon: CircleAvatar(
+                      radius: 14,
+                      backgroundColor:
+                      isReserve ? Colors.orange : AppTheme.primary,
+                      child: Text('${i + 1}',
+                          style: const TextStyle(
+                              fontSize: 11, color: Colors.white)),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              GestureDetector(
+                onTap: () => setState(() {
+                  if (isReserve) {
+                    reserveIndices.remove(i);
+                  } else {
+                    reserveIndices.add(i);
+                  }
+                }),
+                child: Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    color: isReserve
+                        ? Colors.orange
+                        : Colors.grey.shade200,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Center(
+                    child: Text('R',
+                        style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                            color: isReserve
+                                ? Colors.white
+                                : Colors.grey.shade600)),
+                  ),
+                ),
+              ),
+            ]),
+          );
+        }),
       ],
     );
   }

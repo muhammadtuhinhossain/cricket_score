@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:collection/collection.dart';
 import 'package:flutter/foundation.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:uuid/uuid.dart';
@@ -16,6 +17,7 @@ class AppProvider extends ChangeNotifier {
   List<Team> get teams => _teams;
   List<CricketMatch> get matches => _matches;
   CricketMatch? get activeMatch => _activeMatch;
+  Innings? get currentInnings => _activeMatch?.currentInnings;
 
   // Milestone notification
   String? lastMilestone;
@@ -37,12 +39,20 @@ class AppProvider extends ChangeNotifier {
     final matchesJson = _box.get('matches');
 
     if (teamsJson != null) {
-      final list = jsonDecode(teamsJson) as List;
-      _teams = list.map((t) => Team.fromJson(t)).toList();
+      try {
+        final list = jsonDecode(teamsJson) as List;
+        _teams = list.map((t) => Team.fromJson(t)).toList();
+      } catch (_) {
+        _teams = [];
+      }
     }
     if (matchesJson != null) {
-      final list = jsonDecode(matchesJson) as List;
-      _matches = list.map((m) => CricketMatch.fromJson(m)).toList();
+      try {
+        final list = jsonDecode(matchesJson) as List;
+        _matches = list.map((m) => CricketMatch.fromJson(m)).toList();
+      } catch (_) {
+        _matches = [];
+      }
     }
     notifyListeners();
   }
@@ -50,6 +60,10 @@ class AppProvider extends ChangeNotifier {
   Future<void> _save() async {
     await _box.put('teams', jsonEncode(_teams.map((t) => t.toJson()).toList()));
     await _box.put('matches', jsonEncode(_matches.map((m) => m.toJson()).toList()));
+  }
+
+  void _saveAsync() {
+    Future.microtask(() => _save());
   }
 
 
@@ -118,7 +132,7 @@ class AppProvider extends ChangeNotifier {
       }
     }
 
-    _save();
+    _saveAsync();
     notifyListeners();
     return inningsJustCompleted;
   }
@@ -230,7 +244,7 @@ class AppProvider extends ChangeNotifier {
           .toList(),
     );
     _teams.add(team);
-    _save();
+    _saveAsync();
     notifyListeners();
     return team;
   }
@@ -239,35 +253,55 @@ class AppProvider extends ChangeNotifier {
     final idx = _teams.indexWhere((t) => t.id == teamId);
     if (idx >= 0) {
       _teams[idx].name = newName;
-      _save();
+      _saveAsync();
       notifyListeners();
     }
   }
 
   void addPlayerToTeam(String teamId, String playerName) {
     final team = _teams.firstWhere((t) => t.id == teamId);
-    team.players.add(Player(id: _uuid.v4(), name: playerName.trim()));
-    _save();
+    final newPlayer = Player(id: _uuid.v4(), name: playerName.trim());
+    team.players.add(newPlayer);
+
+    // active match এ এই team থাকলে সেখানেও add করো
+    for (final match in _matches) {
+      if (match.status == MatchStatus.inProgress) {
+        if (match.hostTeamId == teamId) {
+          match.tempHostPlayers.add(Player(id: newPlayer.id, name: newPlayer.name));
+        } else if (match.visitorTeamId == teamId) {
+          match.tempVisitorPlayers.add(Player(id: newPlayer.id, name: newPlayer.name));
+        }
+      }
+    }
+
+    _saveAsync();
     notifyListeners();
   }
 
   void removePlayerFromTeam(String teamId, int playerIndex) {
     final team = _teams.firstWhere((t) => t.id == teamId);
     if (playerIndex < 0 || playerIndex >= team.players.length) return;
+    final removedId = team.players[playerIndex].id;
     team.players.removeAt(playerIndex);
-    _save();
+
+    // সব match থেকেও সরাও
+    for (final match in _matches) {
+      match.tempHostPlayers.removeWhere((p) => p.id == removedId);
+      match.tempVisitorPlayers.removeWhere((p) => p.id == removedId);
+    }
+
+    _saveAsync();
     notifyListeners();
   }
 
   void deleteTeam(String teamId) {
     _teams.removeWhere((t) => t.id == teamId);
-    _save();
+    _saveAsync();
     notifyListeners();
   }
 
   Team? getTeam(String id) {
-    try { return _teams.firstWhere((t) => t.id == id); }
-    catch (_) { return null; }
+    return _teams.firstWhereOrNull((t) => t.id == id);
   }
 
   CricketMatch createMatch({
@@ -275,6 +309,8 @@ class AppProvider extends ChangeNotifier {
     required String visitorTeamName,
     required List<String> hostPlayerNames,
     required List<String> visitorPlayerNames,
+    Set<int> hostReserveIndices = const {},
+    Set<int> visitorReserveIndices = const {},
     required MatchFormat format,
     required int totalOvers,
     required String tossWonBy,
@@ -292,11 +328,23 @@ class AppProvider extends ChangeNotifier {
           ? visitorTeam.id : hostTeam.id;
     }
 
-    final freshHostPlayers = hostTeam.players
-        .map((p) => Player(id: p.id, name: p.name))
+    // Team এ যেভাবে reserve mark করা আছে সেটাই আসবে
+    // hostReserveIndices দিলে সেটা override করবে, না দিলে team এর isReserve ব্যবহার হবে
+    final freshHostPlayers = hostTeam.players.asMap().entries
+        .map((e) => Player(
+        id: e.value.id,
+        name: e.value.name,
+        isReserve: hostReserveIndices.isNotEmpty
+            ? hostReserveIndices.contains(e.key)
+            : e.value.isReserve))
         .toList();
-    final freshVisitorPlayers = visitorTeam.players
-        .map((p) => Player(id: p.id, name: p.name))
+    final freshVisitorPlayers = visitorTeam.players.asMap().entries
+        .map((e) => Player(
+        id: e.value.id,
+        name: e.value.name,
+        isReserve: visitorReserveIndices.isNotEmpty
+            ? visitorReserveIndices.contains(e.key)
+            : e.value.isReserve))
         .toList();
 
     final match = CricketMatch(
@@ -315,7 +363,7 @@ class AppProvider extends ChangeNotifier {
 
     _matches.add(match);
     _activeMatch = match;
-    _save();
+    _saveAsync();
     notifyListeners();
     return match;
   }
@@ -327,6 +375,39 @@ class AppProvider extends ChangeNotifier {
     } catch (_) {
       return createTeam(name, playerNames);
     }
+  }
+
+  // new match advanced settings থেকে reserve update করে team এ save করো
+  // reserveIndices = player index গুলো যারা reserve
+  void syncReserveToTeam({
+    required String teamId,
+    required Set<int> reserveIndices,
+  }) {
+    final teamIdx = _teams.indexWhere((t) => t.id == teamId);
+    if (teamIdx < 0) return;
+    final team = _teams[teamIdx];
+    for (int i = 0; i < team.players.length; i++) {
+      final shouldBeReserve = reserveIndices.contains(i);
+      team.players[i] = team.players[i].copyWith(isReserve: shouldBeReserve);
+    }
+    _saveAsync();
+    notifyListeners();
+  }
+
+  // player id list দিয়ে reserve sync — আরো accurate
+  void syncReserveToTeamByIds({
+    required String teamId,
+    required Set<String> reservePlayerIds,
+  }) {
+    final teamIdx = _teams.indexWhere((t) => t.id == teamId);
+    if (teamIdx < 0) return;
+    final team = _teams[teamIdx];
+    for (int i = 0; i < team.players.length; i++) {
+      final shouldBeReserve = reservePlayerIds.contains(team.players[i].id);
+      team.players[i] = team.players[i].copyWith(isReserve: shouldBeReserve);
+    }
+    _saveAsync();
+    notifyListeners();
   }
 
   void setActiveMatch(CricketMatch match) {
@@ -349,7 +430,7 @@ class AppProvider extends ChangeNotifier {
       batsman1Id: strikerBatsmanId,
       batsman2Id: nonStrikerBatsmanId,
     ));
-    _save();
+    _saveAsync();
     notifyListeners();
   }
 
@@ -360,8 +441,8 @@ class AppProvider extends ChangeNotifier {
 
     innings.ballEvents.add(event);
 
-    final striker = _findPlayer(allPlayers, innings.strikerBatsmanId!);
-    final bowler = _findPlayer(allPlayers, innings.currentBowlerId!);
+    final striker = _findPlayer(allPlayers, innings.strikerBatsmanId ?? '');
+    final bowler = _findPlayer(allPlayers, innings.currentBowlerId ?? '');
     final currentPartnership = innings.partnerships.isNotEmpty
         ? innings.partnerships.last : null;
 
@@ -511,15 +592,34 @@ class AppProvider extends ChangeNotifier {
     if (isLegalBall && innings.totalBalls % 6 == 0) {
       innings.overRunTotals.add(innings.totalRuns);
       _calculateMaidens(innings, bowler);
-      _swapBatsmen(innings);
+      if (event.type == BallType.wicket) {
+        // Over শেষে wicket — nonStriker এখন striker হবে
+        // নতুন batsman nonStriker হিসেবে dialog থেকে আসবে
+        innings.strikerBatsmanId = innings.nonStrikerBatsmanId;
+        innings.nonStrikerBatsmanId = null;
+      } else {
+        _swapBatsmen(innings);
+      }
     }
 
     bool oversCompleted = innings.totalBalls >= match.totalOvers * 6;
 
 
     final battingTeamPlayers = getTeamPlayersForMatch(innings.teamId, match);
-    final maxWickets = (battingTeamPlayers.length - 1).clamp(1, battingTeamPlayers.length);
+    // reserve বাদ, শুধু main players
+    final mainPlayers = battingTeamPlayers.where((p) => !p.isReserve).toList();
+    // n জন main player হলে (n-1) wickেটে all out
+    final maxWickets = (mainPlayers.length - 1).clamp(1, mainPlayers.length);
     bool allOut = innings.wickets >= maxWickets;
+
+    // extra check: মাঠে যে দুজন আছে তার একজন out হলে
+    // আর কোনো main player না থাকলেও all out
+    if (!allOut && event.type == BallType.wicket) {
+      final remaining = mainPlayers.where((p) =>
+      !p.isOut &&
+          p.id != innings.nonStrikerBatsmanId).toList();
+      if (remaining.isEmpty) allOut = true;
+    }
 
 
     bool targetChased = false;
@@ -535,7 +635,7 @@ class AppProvider extends ChangeNotifier {
       _completeInnings(match, innings);
     }
 
-    _save();
+    _saveAsync();
     notifyListeners();
   }
 
@@ -612,7 +712,7 @@ class AppProvider extends ChangeNotifier {
     final all = _getAllPlayersForMatch(match);
     final p = _findPlayer(all, playerId);
     if (p != null) p.name = newName;
-    _save();
+    _saveAsync();
     notifyListeners();
   }
 
@@ -622,7 +722,7 @@ class AppProvider extends ChangeNotifier {
     if (!innings.battingOrder.contains(playerId)) {
       innings.battingOrder.add(playerId);
     }
-    _save();
+    _saveAsync();
     notifyListeners();
   }
 
@@ -630,25 +730,110 @@ class AppProvider extends ChangeNotifier {
     final innings = _activeMatch?.currentInnings;
     if (innings == null) return;
     _swapBatsmen(innings);
-    _save();
+    _saveAsync();
     notifyListeners();
   }
 
   void setNextBatsman(String playerId) {
-    final innings = _activeMatch!.currentInnings!;
-    innings.strikerBatsmanId = playerId;
+    final innings = _activeMatch?.currentInnings;
+    if (innings == null) return;
+
     if (!innings.battingOrder.contains(playerId)) {
       innings.battingOrder.add(playerId);
     }
 
-    final nonStriker = innings.nonStrikerBatsmanId;
-    if (nonStriker != null) {
-      innings.partnerships.add(Partnership(
-        batsman1Id: playerId,
-        batsman2Id: nonStriker,
-      ));
+    // nonStrikerBatsmanId null মানে over শেষে wicket হয়েছে
+    // তখন নতুন batsman nonStriker হবে, striker আগেই set হয়েছে
+    if (innings.nonStrikerBatsmanId == null) {
+      innings.nonStrikerBatsmanId = playerId;
+      // partnership: striker (আগের nonStriker) + নতুন nonStriker
+      final striker = innings.strikerBatsmanId;
+      if (striker != null && striker != playerId) {
+        innings.partnerships.add(Partnership(
+          batsman1Id: striker,
+          batsman2Id: playerId,
+        ));
+      }
+    } else {
+      // সাধারণ wicket — নতুন batsman striker হবে
+      innings.strikerBatsmanId = playerId;
+      final nonStriker = innings.nonStrikerBatsmanId;
+      if (nonStriker != null && nonStriker != playerId) {
+        innings.partnerships.add(Partnership(
+          batsman1Id: playerId,
+          batsman2Id: nonStriker,
+        ));
+      }
     }
-    _save();
+
+    _saveAsync();
+    notifyListeners();
+  }
+
+  // ── Reserve Player Substitute ─────────────────────────────────────────────
+  // reservePlayer আসবে, outPlayer বেঞ্চে যাবে (isReserve toggle হবে)
+  void togglePlayerReserve(String teamId, int playerIndex) {
+    final team = _teams.firstWhere((t) => t.id == teamId);
+    if (playerIndex < team.players.length) {
+      final p = team.players[playerIndex];
+      final newReserve = !p.isReserve;
+      team.players[playerIndex] = p.copyWith(isReserve: newReserve);
+
+      // active match এ থাকলে সেখানেও sync করো
+      for (final match in _matches) {
+        for (final mp in [...match.tempHostPlayers, ...match.tempVisitorPlayers]) {
+          if (mp.id == p.id) mp.isReserve = newReserve;
+        }
+      }
+
+      _saveAsync();
+      notifyListeners();
+    }
+  }
+
+  void substituteReservePlayer({
+    required CricketMatch match,
+    required String reservePlayerId,
+    required String outPlayerId,
+    required Innings innings,
+  }) {
+    final allPlayers = [
+      ...match.tempHostPlayers,
+      ...match.tempVisitorPlayers,
+    ];
+
+    // match এ reserve toggle
+    for (final p in allPlayers) {
+      if (p.id == reservePlayerId) p.isReserve = false;
+      if (p.id == outPlayerId) p.isReserve = true;
+    }
+
+    // team এও reserve status sync করো
+    for (final team in _teams) {
+      for (int i = 0; i < team.players.length; i++) {
+        if (team.players[i].id == reservePlayerId) {
+          team.players[i] = team.players[i].copyWith(isReserve: false);
+        }
+        if (team.players[i].id == outPlayerId) {
+          team.players[i] = team.players[i].copyWith(isReserve: true);
+        }
+      }
+    }
+
+    // যদি striker বা non-striker বাইরে যায়, তাকেও swap করো
+    if (innings.strikerBatsmanId == outPlayerId) {
+      innings.strikerBatsmanId = reservePlayerId;
+      if (!innings.battingOrder.contains(reservePlayerId)) {
+        innings.battingOrder.add(reservePlayerId);
+      }
+    } else if (innings.nonStrikerBatsmanId == outPlayerId) {
+      innings.nonStrikerBatsmanId = reservePlayerId;
+      if (!innings.battingOrder.contains(reservePlayerId)) {
+        innings.battingOrder.add(reservePlayerId);
+      }
+    }
+
+    _saveAsync();
     notifyListeners();
   }
 
@@ -658,8 +843,23 @@ class AppProvider extends ChangeNotifier {
     if (!innings.bowlingOrder.contains(bowlerId)) {
       innings.bowlingOrder.add(bowlerId);
     }
-    _save();
+    _saveAsync();
     notifyListeners();
+  }
+
+  // আগের over এ যে bowl করেছে তার ID — consecutive over restriction এর জন্য
+  String? getLastOverBowlerId(Innings innings) {
+    if (innings.completedOvers == 0) return null;
+    // শেষ completed over এর ball events খুঁজি
+    final legalBalls = innings.ballEvents
+        .where((b) => b.type != BallType.wide && b.type != BallType.noBall)
+        .toList();
+    // আগের over মানে completedOvers-1 এর শেষ ball
+    final prevOverLastBallIdx = (innings.completedOvers * 6) - 1;
+    if (prevOverLastBallIdx < 0 || prevOverLastBallIdx >= legalBalls.length) {
+      return null;
+    }
+    return legalBalls[prevOverLastBallIdx].bowlerId;
   }
 
   void undoLastBall() {
@@ -676,8 +876,8 @@ class AppProvider extends ChangeNotifier {
 
     switch (lastEvent.type) {
       case BallType.normal:
-        final striker = _findPlayer(allPlayers, innings.strikerBatsmanId!);
-        final bowler = _findPlayer(allPlayers, innings.currentBowlerId!);
+        final striker = _findPlayer(allPlayers, innings.strikerBatsmanId ?? '');
+        final bowler = _findPlayer(allPlayers, innings.currentBowlerId ?? '');
         striker?.runs -= lastEvent.runs;
         striker?.balls--;
         if (lastEvent.runs == 4) striker?.fours--;
@@ -688,14 +888,14 @@ class AppProvider extends ChangeNotifier {
         if (lastEvent.runs % 2 != 0) _swapBatsmen(innings);
         break;
       case BallType.wide:
-        final bowler = _findPlayer(allPlayers, innings.currentBowlerId!);
+        final bowler = _findPlayer(allPlayers, innings.currentBowlerId ?? '');
         bowler?.wides--;
         bowler?.runsConceded -= lastEvent.runs;
         innings.totalRuns -= lastEvent.runs;
         break;
       case BallType.noBall:
-        final striker = _findPlayer(allPlayers, innings.strikerBatsmanId!);
-        final bowler = _findPlayer(allPlayers, innings.currentBowlerId!);
+        final striker = _findPlayer(allPlayers, innings.strikerBatsmanId ?? '');
+        final bowler = _findPlayer(allPlayers, innings.currentBowlerId ?? '');
         striker?.runs -= lastEvent.runs;
         if (lastEvent.runs > 0) striker?.balls--;
         bowler?.noBalls--;
@@ -703,22 +903,22 @@ class AppProvider extends ChangeNotifier {
         innings.totalRuns -= (lastEvent.runs + 1);
         break;
       case BallType.bye:
-        final striker = _findPlayer(allPlayers, innings.strikerBatsmanId!);
+        final striker = _findPlayer(allPlayers, innings.strikerBatsmanId ?? '');
         innings.totalRuns -= lastEvent.runs;
         innings.totalBalls--;
         striker?.balls--;
         if (lastEvent.runs % 2 != 0) _swapBatsmen(innings);
         break;
       case BallType.legBye:
-        final striker = _findPlayer(allPlayers, innings.strikerBatsmanId!);
+        final striker = _findPlayer(allPlayers, innings.strikerBatsmanId ?? '');
         innings.totalRuns -= lastEvent.runs;
         innings.totalBalls--;
         striker?.balls--;
         if (lastEvent.runs % 2 != 0) _swapBatsmen(innings);
         break;
       case BallType.wicket:
-        final striker = _findPlayer(allPlayers, innings.strikerBatsmanId!);
-        final bowler = _findPlayer(allPlayers, innings.currentBowlerId!);
+        final striker = _findPlayer(allPlayers, innings.strikerBatsmanId ?? '');
+        final bowler = _findPlayer(allPlayers, innings.currentBowlerId ?? '');
         striker?.isOut = false;
         striker?.dismissalInfo = null;
         striker?.balls--;
@@ -738,7 +938,7 @@ class AppProvider extends ChangeNotifier {
       innings.overRunTotals.removeLast();
     }
 
-    _save();
+    _saveAsync();
     notifyListeners();
   }
 
@@ -746,7 +946,7 @@ class AppProvider extends ChangeNotifier {
     final idx = _matches.indexWhere((m) => m.id == matchId);
     if (idx >= 0) {
       _matches[idx].isArchived = true;
-      _save();
+      _saveAsync();
       notifyListeners();
     }
   }
@@ -754,7 +954,7 @@ class AppProvider extends ChangeNotifier {
   void deleteMatch(String matchId) {
     _matches.removeWhere((m) => m.id == matchId);
     if (_activeMatch?.id == matchId) _activeMatch = null;
-    _save();
+    _saveAsync();
     notifyListeners();
   }
 
@@ -769,8 +969,7 @@ class AppProvider extends ChangeNotifier {
       _getAllPlayersForMatch(match);
 
   Player? _findPlayer(List<Player> players, String id) {
-    try { return players.firstWhere((p) => p.id == id); }
-    catch (_) { return null; }
+    return players.firstWhereOrNull((p) => p.id == id);
   }
 
   Player? getPlayerById(String id, CricketMatch match) {
@@ -787,12 +986,21 @@ class AppProvider extends ChangeNotifier {
 
   String addTempPlayer(String name, String teamId, CricketMatch match) {
     final player = Player(id: _uuid.v4(), name: name.trim());
+
+    // match এ add
     if (teamId == match.hostTeamId) {
       match.tempHostPlayers.add(player);
     } else {
       match.tempVisitorPlayers.add(player);
     }
-    _save();
+
+    // team এও permanently save হবে
+    final teamIdx = _teams.indexWhere((t) => t.id == teamId);
+    if (teamIdx >= 0) {
+      _teams[teamIdx].players.add(Player(id: player.id, name: player.name));
+    }
+
+    _saveAsync();
     notifyListeners();
     return player.id;
   }

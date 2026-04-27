@@ -40,6 +40,7 @@ class TournamentsScreen extends StatelessWidget {
               ),
             ),
             floatingActionButton: FloatingActionButton.extended(
+              heroTag: 'tournaments_new_fab',
               backgroundColor: AppTheme.primary,
               onPressed: () => Navigator.push(
                 context,
@@ -93,7 +94,7 @@ class _TournamentCard extends StatelessWidget {
                     padding: const EdgeInsets.symmetric(
                         horizontal: 8, vertical: 3),
                     decoration: BoxDecoration(
-                      color: statusColor.withOpacity(0.15),
+                      color: statusColor.withValues(alpha: 0.15),
                       borderRadius: BorderRadius.circular(6),
                     ),
                     child: Text(statusText,

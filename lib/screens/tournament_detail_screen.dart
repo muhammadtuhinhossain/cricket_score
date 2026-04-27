@@ -244,116 +244,241 @@ class _MatchTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final team1 = aProvider.getTeam(tMatch.team1Id);
-    final team2 = aProvider.getTeam(tMatch.team2Id);
-    final done = tMatch.isCompleted;
-    final winner = done ? aProvider.getTeam(tMatch.winnerId ?? '') : null;
+    // Consumer দিয়ে wrap করা হয়েছে — match complete বা live হলে
+    // সাথে সাথে UI update হবে, rebuild নিশ্চিত করতে
+    return Consumer2<AppProvider, TournamentProvider>(
+      builder: (ctx, latestAProvider, latestTProvider, _) {
+        // সবসময় latest provider থেকে tournament ও match নাও
+        final latestTournament =
+            latestTProvider.getTournament(tournament.id) ?? tournament;
+        final latestTMatch = latestTournament.matches.firstWhere(
+              (m) => m.matchId == tMatch.matchId,
+          orElse: () => tMatch,
+        );
 
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: () => done
-            ? _showResultSummary(context)
-            : _showMatchOptions(context),
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Column(children: [
-            Row(children: [
-              Expanded(
-                child: Text(
-                  team1?.name ?? '-',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontWeight: tMatch.winnerId == tMatch.team1Id
-                        ? FontWeight.bold
-                        : FontWeight.w400,
-                    fontSize: 14,
-                    color: tMatch.winnerId == tMatch.team1Id
-                        ? AppTheme.primary
-                        : AppTheme.textPrimary,
+        final team1 = latestAProvider.getTeam(latestTMatch.team1Id);
+        final team2 = latestAProvider.getTeam(latestTMatch.team2Id);
+        final done = latestTMatch.isCompleted;
+        final winner =
+        done ? latestAProvider.getTeam(latestTMatch.winnerId ?? '') : null;
+
+        // live match খুঁজি — cricketMatchId দিয়ে
+        CricketMatch? linkedMatch;
+        if (latestTMatch.cricketMatchId != null) {
+          try {
+            linkedMatch = latestAProvider.matches.firstWhere(
+                  (m) => m.id == latestTMatch.cricketMatchId,
+            );
+            // completed হলে linkedMatch null করো — শুধু inProgress দেখাবে
+            if (linkedMatch?.status != MatchStatus.inProgress) {
+              linkedMatch = null;
+            }
+          } catch (_) {
+            linkedMatch = null;
+          }
+        }
+        // cricketMatchId না থাকলে team দিয়ে খুঁজি (fallback)
+        if (linkedMatch == null) {
+          try {
+            linkedMatch = latestAProvider.matches.firstWhere(
+                  (m) =>
+              m.status == MatchStatus.inProgress &&
+                  ((m.hostTeamId == latestTMatch.team1Id &&
+                      m.visitorTeamId == latestTMatch.team2Id) ||
+                      (m.hostTeamId == latestTMatch.team2Id &&
+                          m.visitorTeamId == latestTMatch.team1Id)),
+            );
+          } catch (_) {
+            linkedMatch = null;
+          }
+        }
+        final isLive = linkedMatch != null;
+
+        return Card(
+          margin: const EdgeInsets.only(bottom: 8),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: () => done
+                ? _showResultSummary(context, latestTMatch, latestAProvider)
+                : _showMatchOptions(context, latestTMatch, latestAProvider,
+                latestTProvider, latestTournament, linkedMatch),
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(children: [
+                Row(children: [
+                  Expanded(
+                    child: Text(
+                      team1?.name ?? '-',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontWeight: latestTMatch.winnerId == latestTMatch.team1Id
+                            ? FontWeight.bold
+                            : FontWeight.w400,
+                        fontSize: 14,
+                        color: latestTMatch.winnerId == latestTMatch.team1Id
+                            ? AppTheme.primary
+                            : AppTheme.textPrimary,
+                      ),
+                    ),
                   ),
-                ),
-              ),
-              Container(
-                margin: const EdgeInsets.symmetric(horizontal: 8),
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(
-                  color: done
-                      ? AppTheme.primary
-                      : Colors.grey.shade200,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  done ? 'DONE' : 'vs',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                    color:
-                    done ? Colors.white : AppTheme.textSecondary,
+                  Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 8),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: done
+                          ? AppTheme.primary
+                          : isLive
+                          ? Colors.red.withValues(alpha: 0.08)
+                          : Colors.grey.shade200,
+                      borderRadius: BorderRadius.circular(8),
+                      border: isLive && !done
+                          ? Border.all(color: Colors.red.withValues(alpha: 0.3))
+                          : null,
+                    ),
+                    child: done
+                        ? const Text('DONE',
+                        style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white))
+                        : isLive
+                        ? Row(mainAxisSize: MainAxisSize.min, children: [
+                      Container(
+                        width: 6,
+                        height: 6,
+                        margin: const EdgeInsets.only(right: 4),
+                        decoration: const BoxDecoration(
+                            color: Colors.red,
+                            shape: BoxShape.circle),
+                      ),
+                      const Text('LIVE',
+                          style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.red)),
+                    ])
+                        : Text('vs',
+                        style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: AppTheme.textSecondary)),
                   ),
-                ),
-              ),
-              Expanded(
-                child: Text(
-                  team2?.name ?? '-',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontWeight: tMatch.winnerId == tMatch.team2Id
-                        ? FontWeight.bold
-                        : FontWeight.w400,
-                    fontSize: 14,
-                    color: tMatch.winnerId == tMatch.team2Id
-                        ? AppTheme.primary
-                        : AppTheme.textPrimary,
+                  Expanded(
+                    child: Text(
+                      team2?.name ?? '-',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontWeight: latestTMatch.winnerId == latestTMatch.team2Id
+                            ? FontWeight.bold
+                            : FontWeight.w400,
+                        fontSize: 14,
+                        color: latestTMatch.winnerId == latestTMatch.team2Id
+                            ? AppTheme.primary
+                            : AppTheme.textPrimary,
+                      ),
+                    ),
                   ),
-                ),
-              ),
-            ]),
-            if (done && winner != null) ...[
-              const SizedBox(height: 6),
-              Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                const Icon(Icons.emoji_events,
-                    size: 14, color: AppTheme.accent),
-                const SizedBox(width: 4),
-                Text('${winner.name} won',
-                    style: const TextStyle(
-                        fontSize: 12,
-                        color: AppTheme.primary,
-                        fontWeight: FontWeight.w500)),
+                ]),
+                if (done && winner != null) ...[
+                  const SizedBox(height: 6),
+                  Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                    const Icon(Icons.emoji_events,
+                        size: 14, color: AppTheme.accent),
+                    const SizedBox(width: 4),
+                    Text('${winner.name} won',
+                        style: const TextStyle(
+                            fontSize: 12,
+                            color: AppTheme.primary,
+                            fontWeight: FontWeight.w500)),
+                  ]),
+                ],
+                if (!done) ...[
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: () {
+                        if (isLive && linkedMatch != null) {
+                          _navigateToLiveMatch(context, linkedMatch!,
+                              latestTMatch, latestAProvider, latestTProvider,
+                              latestTournament);
+                        } else {
+                          _showMatchOptions(context, latestTMatch,
+                              latestAProvider, latestTProvider,
+                              latestTournament, linkedMatch);
+                        }
+                      },
+                      icon: Icon(
+                        isLive ? Icons.play_circle_fill : Icons.play_arrow,
+                        size: 16,
+                      ),
+                      label: Text(isLive ? 'Resume' : 'Start Match'),
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        textStyle: const TextStyle(fontSize: 13),
+                        backgroundColor: isLive ? Colors.green : null,
+                        foregroundColor: isLive ? Colors.white : null,
+                      ),
+                    ),
+                  ),
+                ],
               ]),
-            ],
-            if (!done) ...[
-              const SizedBox(height: 8),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: () => _showMatchOptions(context),
-                  icon: const Icon(Icons.play_arrow, size: 16),
-                  label: const Text('Start Match'),
-                  style: ElevatedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 8),
-                      textStyle: const TextStyle(fontSize: 13)),
-                ),
-              ),
-            ],
-          ]),
-        ),
-      ),
+            ),
+          ),
+        );
+      },
     );
   }
 
-  void _showResultSummary(BuildContext context) {
-    final team1 = aProvider.getTeam(tMatch.team1Id);
-    final team2 = aProvider.getTeam(tMatch.team2Id);
-    final winner = aProvider.getTeam(tMatch.winnerId ?? '');
+  // live match এ সরাসরি যাও
+  void _navigateToLiveMatch(
+      BuildContext context,
+      CricketMatch liveMatch,
+      TournamentMatch latestTMatch,
+      AppProvider latestAProvider,
+      TournamentProvider latestTProvider,
+      Tournament latestTournament,
+      ) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ScoringScreen(matchId: liveMatch.id),
+      ),
+    ).then((_) {
+      if (!context.mounted) return;
+      final freshAProvider = context.read<AppProvider>();
+      final freshTProvider = context.read<TournamentProvider>();
+      final freshTournament = freshTProvider.getTournament(latestTournament.id)
+          ?? latestTournament;
+      final freshTMatch = freshTournament.matches.firstWhere(
+            (m) => m.matchId == latestTMatch.matchId,
+        orElse: () => latestTMatch,
+      );
+      final updated = freshAProvider.matches
+          .where((m) => m.id == liveMatch.id)
+          .firstOrNull;
+      if (updated != null && updated.status == MatchStatus.completed) {
+        _showPostScoringDialog(context, updated, freshTMatch,
+            freshAProvider, freshTProvider, freshTournament);
+      }
+    });
+  }
+
+  void _showResultSummary(
+      BuildContext context,
+      TournamentMatch latestTMatch,
+      AppProvider latestAProvider,
+      ) {
+    final team1 = latestAProvider.getTeam(latestTMatch.team1Id);
+    final team2 = latestAProvider.getTeam(latestTMatch.team2Id);
+    final winner = latestAProvider.getTeam(latestTMatch.winnerId ?? '');
 
     String motmName = '-';
-    if (tMatch.manOfTheMatch != null) {
-      for (final t in aProvider.teams) {
+    if (latestTMatch.manOfTheMatch != null) {
+      for (final t in latestAProvider.teams) {
         for (final p in t.players) {
-          if (p.id == tMatch.manOfTheMatch) {
+          if (p.id == latestTMatch.manOfTheMatch) {
             motmName = p.name;
             break;
           }
@@ -393,9 +518,16 @@ class _MatchTile extends StatelessWidget {
     );
   }
 
-  void _showMatchOptions(BuildContext context) {
-    final team1 = aProvider.getTeam(tMatch.team1Id);
-    final team2 = aProvider.getTeam(tMatch.team2Id);
+  void _showMatchOptions(
+      BuildContext context,
+      TournamentMatch latestTMatch,
+      AppProvider latestAProvider,
+      TournamentProvider latestTProvider,
+      Tournament latestTournament,
+      CricketMatch? linkedMatch,
+      ) {
+    final team1 = latestAProvider.getTeam(latestTMatch.team1Id);
+    final team2 = latestAProvider.getTeam(latestTMatch.team2Id);
 
     showModalBottomSheet(
       context: context,
@@ -413,18 +545,30 @@ class _MatchTile extends StatelessWidget {
             leading: Container(
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
-                  color: AppTheme.primary.withOpacity(0.1),
+                  color: AppTheme.primary.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(8)),
               child: const Icon(Icons.sports_cricket,
                   color: AppTheme.primary),
             ),
-            title: const Text('Score this match',
-                style: TextStyle(fontWeight: FontWeight.w600)),
-            subtitle: const Text('Open live scoring'),
-            trailing: const Icon(Icons.arrow_forward_ios, size: 14),
+            title: Text(
+                linkedMatch != null ? 'Resume Match' : 'Score this match',
+                style:
+                const TextStyle(fontWeight: FontWeight.w600)),
+            subtitle: Text(linkedMatch != null
+                ? 'Continue live scoring'
+                : 'Open live scoring'),
+            trailing:
+            const Icon(Icons.arrow_forward_ios, size: 14),
             onTap: () {
               Navigator.pop(context);
-              _showTossDialog(context);
+              if (linkedMatch != null) {
+                _navigateToLiveMatch(context, linkedMatch,
+                    latestTMatch, latestAProvider, latestTProvider,
+                    latestTournament);
+              } else {
+                _showTossDialog(context, latestTMatch, latestAProvider,
+                    latestTProvider, latestTournament);
+              }
             },
           ),
           const Divider(),
@@ -432,7 +576,7 @@ class _MatchTile extends StatelessWidget {
             leading: Container(
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
-                  color: Colors.orange.withOpacity(0.1),
+                  color: Colors.orange.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(8)),
               child:
               const Icon(Icons.edit_note, color: Colors.orange),
@@ -440,10 +584,12 @@ class _MatchTile extends StatelessWidget {
             title: const Text('Enter result manually',
                 style: TextStyle(fontWeight: FontWeight.w600)),
             subtitle: const Text('Just save who won'),
-            trailing: const Icon(Icons.arrow_forward_ios, size: 14),
+            trailing:
+            const Icon(Icons.arrow_forward_ios, size: 14),
             onTap: () {
               Navigator.pop(context);
-              _showManualResultDialog(context);
+              _showManualResultDialog(context, latestTMatch,
+                  latestAProvider, latestTProvider, latestTournament);
             },
           ),
           const SizedBox(height: 8),
@@ -453,11 +599,17 @@ class _MatchTile extends StatelessWidget {
   }
 
   // ── Toss Dialog ─────
-  void _showTossDialog(BuildContext context) {
-    final team1 = aProvider.getTeam(tMatch.team1Id);
-    final team2 = aProvider.getTeam(tMatch.team2Id);
+  void _showTossDialog(
+      BuildContext context,
+      TournamentMatch latestTMatch,
+      AppProvider latestAProvider,
+      TournamentProvider latestTProvider,
+      Tournament latestTournament,
+      ) {
+    final team1 = latestAProvider.getTeam(latestTMatch.team1Id);
+    final team2 = latestAProvider.getTeam(latestTMatch.team2Id);
 
-    String tossWonBy = tMatch.team1Id;
+    String tossWonBy = latestTMatch.team1Id;
     TossDecision tossDecision = TossDecision.bat;
 
     showDialog(
@@ -478,16 +630,18 @@ class _MatchTile extends StatelessWidget {
                 Expanded(
                   child: _tossChip(
                     label: team1?.name ?? 'Team 1',
-                    selected: tossWonBy == tMatch.team1Id,
-                    onTap: () => setS(() => tossWonBy = tMatch.team1Id),
+                    selected: tossWonBy == latestTMatch.team1Id,
+                    onTap: () =>
+                        setS(() => tossWonBy = latestTMatch.team1Id),
                   ),
                 ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: _tossChip(
                     label: team2?.name ?? 'Team 2',
-                    selected: tossWonBy == tMatch.team2Id,
-                    onTap: () => setS(() => tossWonBy = tMatch.team2Id),
+                    selected: tossWonBy == latestTMatch.team2Id,
+                    onTap: () =>
+                        setS(() => tossWonBy = latestTMatch.team2Id),
                   ),
                 ),
               ]),
@@ -523,9 +677,15 @@ class _MatchTile extends StatelessWidget {
             ElevatedButton(
               onPressed: () {
                 Navigator.pop(ctx2);
-                _startScoring(context,
-                    tossWonById: tossWonBy,
-                    tossDecision: tossDecision);
+                _startScoring(
+                  context,
+                  tossWonById: tossWonBy,
+                  tossDecision: tossDecision,
+                  latestTMatch: latestTMatch,
+                  latestAProvider: latestAProvider,
+                  latestTProvider: latestTProvider,
+                  latestTournament: latestTournament,
+                );
               },
               child: const Text('Start Match'),
             ),
@@ -568,31 +728,43 @@ class _MatchTile extends StatelessWidget {
       );
 
   // ── Start Live Scoring─────
-  void _startScoring(BuildContext context,
-      {required String tossWonById,
-        required TossDecision tossDecision}) {
-    final team1 = aProvider.getTeam(tMatch.team1Id);
-    final team2 = aProvider.getTeam(tMatch.team2Id);
-
+  void _startScoring(
+      BuildContext context, {
+        required String tossWonById,
+        required TossDecision tossDecision,
+        required TournamentMatch latestTMatch,
+        required AppProvider latestAProvider,
+        required TournamentProvider latestTProvider,
+        required Tournament latestTournament,
+      }) {
+    final team1 = latestAProvider.getTeam(latestTMatch.team1Id);
+    final team2 = latestAProvider.getTeam(latestTMatch.team2Id);
 
     final tossWonBy =
-    tossWonById == tMatch.team1Id ? 'host' : 'visitor';
+    tossWonById == latestTMatch.team1Id ? 'host' : 'visitor';
 
-    final match = aProvider.createMatch(
+    final match = latestAProvider.createMatch(
       hostTeamName: team1?.name ?? 'Team 1',
       visitorTeamName: team2?.name ?? 'Team 2',
       hostPlayerNames:
       team1?.players.map((p) => p.name).toList() ?? [],
       visitorPlayerNames:
       team2?.players.map((p) => p.name).toList() ?? [],
-      format: tournament.format == 't20'
+      format: latestTournament.format == 't20'
           ? MatchFormat.t20
-          : tournament.format == 'odi'
+          : latestTournament.format == 'odi'
           ? MatchFormat.odi
           : MatchFormat.custom,
-      totalOvers: tournament.totalOvers,
+      totalOvers: latestTournament.totalOvers,
       tossWonBy: tossWonBy,
       tossDecision: tossDecision,
+    );
+
+    // tournament match এ cricket match id লিঙ্ক করো
+    latestTProvider.linkCricketMatch(
+      tournamentId: latestTournament.id,
+      tournamentMatchId: latestTMatch.matchId,
+      cricketMatchId: match.id,
     );
 
     Navigator.push(
@@ -601,18 +773,33 @@ class _MatchTile extends StatelessWidget {
           builder: (_) => ScoringScreen(matchId: match.id)),
     ).then((_) {
       if (!context.mounted) return;
-      final updated = aProvider.matches
+      // fresh provider নাও — closure এর latestAProvider stale হতে পারে
+      final freshAProvider = context.read<AppProvider>();
+      final freshTProvider = context.read<TournamentProvider>();
+      final freshTournament = freshTProvider.getTournament(latestTournament.id)
+          ?? latestTournament;
+      final freshTMatch = freshTournament.matches.firstWhere(
+            (m) => m.matchId == latestTMatch.matchId,
+        orElse: () => latestTMatch,
+      );
+      final updated = freshAProvider.matches
           .where((m) => m.id == match.id)
           .firstOrNull;
-      if (updated != null &&
-          updated.status == MatchStatus.completed) {
-        _showPostScoringDialog(context, updated);
+      if (updated != null && updated.status == MatchStatus.completed) {
+        _showPostScoringDialog(context, updated, freshTMatch,
+            freshAProvider, freshTProvider, freshTournament);
       }
     });
   }
 
   void _showPostScoringDialog(
-      BuildContext context, CricketMatch match) {
+      BuildContext context,
+      CricketMatch match,
+      TournamentMatch latestTMatch,
+      AppProvider latestAProvider,
+      TournamentProvider latestTProvider,
+      Tournament latestTournament,
+      ) {
     final first = match.firstInnings;
     final second = match.secondInnings;
 
@@ -624,8 +811,8 @@ class _MatchTile extends StatelessWidget {
       if (second.totalRuns > first.totalRuns) {
         final winTeamId = second.teamId;
         winnerId = winTeamId == match.hostTeamId
-            ? tMatch.team1Id
-            : tMatch.team2Id;
+            ? latestTMatch.team1Id
+            : latestTMatch.team2Id;
         winnerRuns = second.totalRuns;
         winnerBalls = second.totalBalls;
         loserRuns = first.totalRuns;
@@ -633,19 +820,19 @@ class _MatchTile extends StatelessWidget {
       } else {
         final winTeamId = first.teamId;
         winnerId = winTeamId == match.hostTeamId
-            ? tMatch.team1Id
-            : tMatch.team2Id;
+            ? latestTMatch.team1Id
+            : latestTMatch.team2Id;
         winnerRuns = first.totalRuns;
         winnerBalls = first.totalBalls;
         loserRuns = second.totalRuns;
         loserBalls = second.totalBalls;
       }
-      loserId = winnerId == tMatch.team1Id
-          ? tMatch.team2Id
-          : tMatch.team1Id;
+      loserId = winnerId == latestTMatch.team1Id
+          ? latestTMatch.team2Id
+          : latestTMatch.team1Id;
     }
 
-    final allPlayers = aProvider.getAllPlayersForMatch(match);
+    final allPlayers = latestAProvider.getAllPlayersForMatch(match);
     String? motmId =
     allPlayers.isNotEmpty ? allPlayers[0].id : null;
 
@@ -688,7 +875,9 @@ class _MatchTile extends StatelessWidget {
                   p.balls > 0 || p.oversBowled > 0)
                       .map((p) {
                     final teamId = _findPlayerTeamTournamentId(
-                        p.id, match);
+                        p.id, match,
+                        latestTMatch: latestTMatch,
+                        latestAProvider: latestAProvider);
                     return PlayerMatchStat(
                       playerId: p.id,
                       teamId: teamId,
@@ -702,9 +891,9 @@ class _MatchTile extends StatelessWidget {
                     );
                   }).toList();
 
-                  tProvider.recordMatchResult(
-                    tournamentId: tournament.id,
-                    tournamentMatchId: tMatch.matchId,
+                  latestTProvider.recordMatchResult(
+                    tournamentId: latestTournament.id,
+                    tournamentMatchId: latestTMatch.matchId,
                     winnerId: winnerId!,
                     loserId: loserId!,
                     winnerRuns: winnerRuns,
@@ -729,16 +918,22 @@ class _MatchTile extends StatelessWidget {
   }
 
   // ── Manual Result ───
-  void _showManualResultDialog(BuildContext context) {
-    final team1 = aProvider.getTeam(tMatch.team1Id);
-    final team2 = aProvider.getTeam(tMatch.team2Id);
+  void _showManualResultDialog(
+      BuildContext context,
+      TournamentMatch latestTMatch,
+      AppProvider latestAProvider,
+      TournamentProvider latestTProvider,
+      Tournament latestTournament,
+      ) {
+    final team1 = latestAProvider.getTeam(latestTMatch.team1Id);
+    final team2 = latestAProvider.getTeam(latestTMatch.team2Id);
 
-    String? winnerId = tMatch.team1Id;
+    String? winnerId = latestTMatch.team1Id;
     String? motmId;
 
     final allPlayers = [
-      ...aProvider.getTeam(tMatch.team1Id)?.players ?? [],
-      ...aProvider.getTeam(tMatch.team2Id)?.players ?? [],
+      ...latestAProvider.getTeam(latestTMatch.team1Id)?.players ?? [],
+      ...latestAProvider.getTeam(latestTMatch.team2Id)?.players ?? [],
     ];
     if (allPlayers.isNotEmpty) motmId = allPlayers[0].id;
 
@@ -762,17 +957,17 @@ class _MatchTile extends StatelessWidget {
                     Expanded(
                         child: _selChip(
                           label: team1?.name ?? 'Team 1',
-                          selected: winnerId == tMatch.team1Id,
-                          onTap: () =>
-                              setS(() => winnerId = tMatch.team1Id),
+                          selected: winnerId == latestTMatch.team1Id,
+                          onTap: () => setS(
+                                  () => winnerId = latestTMatch.team1Id),
                         )),
                     const SizedBox(width: 8),
                     Expanded(
                         child: _selChip(
                           label: team2?.name ?? 'Team 2',
-                          selected: winnerId == tMatch.team2Id,
-                          onTap: () =>
-                              setS(() => winnerId = tMatch.team2Id),
+                          selected: winnerId == latestTMatch.team2Id,
+                          onTap: () => setS(
+                                  () => winnerId = latestTMatch.team2Id),
                         )),
                   ]),
                   const SizedBox(height: 16),
@@ -806,12 +1001,12 @@ class _MatchTile extends StatelessWidget {
             ElevatedButton(
               onPressed: () {
                 if (winnerId == null) return;
-                final loserId = winnerId == tMatch.team1Id
-                    ? tMatch.team2Id
-                    : tMatch.team1Id;
-                tProvider.recordMatchResult(
-                  tournamentId: tournament.id,
-                  tournamentMatchId: tMatch.matchId,
+                final loserId = winnerId == latestTMatch.team1Id
+                    ? latestTMatch.team2Id
+                    : latestTMatch.team1Id;
+                latestTProvider.recordMatchResult(
+                  tournamentId: latestTournament.id,
+                  tournamentMatchId: latestTMatch.matchId,
                   winnerId: winnerId!,
                   loserId: loserId,
                   winnerRuns: 0,
@@ -865,13 +1060,17 @@ class _MatchTile extends StatelessWidget {
       );
 
   String _findPlayerTeamTournamentId(
-      String playerId, CricketMatch match) {
-    final hostTeam = aProvider.getTeam(match.hostTeamId);
+      String playerId,
+      CricketMatch match, {
+        required TournamentMatch latestTMatch,
+        required AppProvider latestAProvider,
+      }) {
+    final hostTeam = latestAProvider.getTeam(match.hostTeamId);
     if (hostTeam != null &&
         hostTeam.players.any((p) => p.id == playerId)) {
-      return tMatch.team1Id;
+      return latestTMatch.team1Id;
     }
-    return tMatch.team2Id;
+    return latestTMatch.team2Id;
   }
 }
 
@@ -944,7 +1143,7 @@ class _PointsTab extends StatelessWidget {
                           horizontal: 12, vertical: 10),
                       decoration: BoxDecoration(
                         color: qualified
-                            ? AppTheme.primary.withOpacity(0.05)
+                            ? AppTheme.primary.withValues(alpha: 0.05)
                             : null,
                         border: Border(
                             bottom: BorderSide(
@@ -1308,7 +1507,7 @@ class _BracketTab extends StatelessWidget {
             width: double.infinity,
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: AppTheme.accent.withOpacity(0.15),
+              color: AppTheme.accent.withValues(alpha: 0.15),
               borderRadius: BorderRadius.circular(12),
               border: Border.all(color: AppTheme.accent, width: 2),
             ),
@@ -1341,7 +1540,7 @@ class _BracketTab extends StatelessWidget {
           padding: const EdgeInsets.symmetric(
               horizontal: 16, vertical: 6),
           decoration: BoxDecoration(
-            color: AppTheme.primary.withOpacity(0.1),
+            color: AppTheme.primary.withValues(alpha: 0.1),
             borderRadius: BorderRadius.circular(20),
           ),
           child: Text(title,

@@ -69,7 +69,7 @@ class TournamentTeam {
 }
 
 class TournamentMatch {
-  final String matchId;
+  final String matchId;       // tournament এর নিজস্ব stable id — কখনো বদলায় না
   final String team1Id;
   final String team2Id;
   final String stage;
@@ -78,6 +78,7 @@ class TournamentMatch {
   String? winnerId;
   String? manOfTheMatch;
   bool isCompleted;
+  String? cricketMatchId;     // linked cricket match এর id (scoring এর পর set হয়)
 
   TournamentMatch({
     required this.matchId,
@@ -89,6 +90,7 @@ class TournamentMatch {
     this.winnerId,
     this.manOfTheMatch,
     this.isCompleted = false,
+    this.cricketMatchId,
   });
 
   Map<String, dynamic> toJson() => {
@@ -101,6 +103,7 @@ class TournamentMatch {
     'winnerId': winnerId,
     'manOfTheMatch': manOfTheMatch,
     'isCompleted': isCompleted,
+    'cricketMatchId': cricketMatchId,
   };
 
   factory TournamentMatch.fromJson(Map<String, dynamic> j) => TournamentMatch(
@@ -115,6 +118,7 @@ class TournamentMatch {
     winnerId: j['winnerId'],
     manOfTheMatch: j['manOfTheMatch'],
     isCompleted: j['isCompleted'] ?? false,
+    cricketMatchId: j['cricketMatchId'],
   );
 }
 

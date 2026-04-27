@@ -1,3 +1,4 @@
+import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
@@ -36,13 +37,12 @@ class _ScoringScreenState extends State<ScoringScreen> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     final provider = context.read<AppProvider>();
-    final matches = provider.matches;
-    try {
-      final match = matches.firstWhere((m) => m.id == widget.matchId);
+    final match = provider.matches.firstWhereOrNull((m) => m.id == widget.matchId);
+    if (match != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         provider.setActiveMatch(match);
       });
-    } catch (_) {}
+    }
   }
 
   @override
@@ -133,6 +133,7 @@ class _ScoringScreenState extends State<ScoringScreen> {
                           _ExtrasInfo(innings: innings),
                           _ThisOver(innings: innings),
                           _NextBatsmenInfo(match: match, innings: innings, provider: provider),
+                          _ReservePlayersPanel(match: match, innings: innings, provider: provider),
                         ],
                       ),
                     ),
@@ -141,7 +142,9 @@ class _ScoringScreenState extends State<ScoringScreen> {
                     match: match,
                     innings: innings,
                     provider: provider,
-                    onWicket: () => _showWicketDialog(context, provider, match, innings),
+                    onWicket: ({bool showBowlerAfter = false}) =>
+                        _showWicketDialog(context, provider, match, innings,
+                            showBowlerAfter: showBowlerAfter),
                     onOverEnd: () => _showChangeBowlerDialog(context, provider, match),
                     onMilestone: (text) {
                       setState(() => _milestoneText = text);
@@ -227,14 +230,16 @@ class _ScoringScreenState extends State<ScoringScreen> {
 
   void _showInitDialog(BuildContext context, AppProvider provider,
       CricketMatch match, Innings innings) {
-    final teamPlayers =
-    provider.getTeamPlayersForMatch(innings.teamId, match);
+    // শুধু main players (reserve বাদ)
+    final teamPlayers = provider.getTeamPlayersForMatch(innings.teamId, match)
+        .where((p) => !p.isReserve).toList();
     final bowlingTeamId = innings.teamId == match.hostTeamId
         ? match.visitorTeamId
         : match.hostTeamId;
     final bowlerPlayers =
     provider.getTeamPlayersForMatch(bowlingTeamId, match);
 
+    // team এ যে order এ আছে সেভাবে auto-select
     String? striker = teamPlayers.isNotEmpty ? teamPlayers[0].id : null;
     String? nonStriker = teamPlayers.length > 1 ? teamPlayers[1].id : null;
     String? bowler = bowlerPlayers.isNotEmpty ? bowlerPlayers[0].id : null;
@@ -247,63 +252,33 @@ class _ScoringScreenState extends State<ScoringScreen> {
         child: StatefulBuilder(
           builder: (ctx2, setS) {
             // all time latest player list take
-            final latestTeamPlayers = provider.getTeamPlayersForMatch(innings.teamId, match);
+            // reserve player init dialog এ আসবে না
+            final latestTeamPlayers = provider.getTeamPlayersForMatch(innings.teamId, match)
+                .where((p) => !p.isReserve).toList();
             final latestBowlerPlayers = provider.getTeamPlayersForMatch(bowlingTeamId, match);
 
             void addBatsman() {
-              final ctrl = TextEditingController();
               showDialog(
                 context: ctx2,
-                builder: (_) => AlertDialog(
-                  title: const Text('নতুন Batsman যোগ করুন'),
-                  content: TextField(
-                    controller: ctrl,
-                    autofocus: true,
-                    textCapitalization: TextCapitalization.words,
-                    decoration: const InputDecoration(labelText: 'Player নাম'),
-                  ),
-                  actions: [
-                    TextButton(onPressed: () => Navigator.pop(ctx2), child: const Text('বাতিল')),
-                    ElevatedButton(
-                      onPressed: () {
-                        final name = ctrl.text.trim();
-                        if (name.isEmpty) return;
-                        final newId = provider.addTempPlayer(name, innings.teamId, match);
-                        Navigator.pop(ctx2);
-                        setS(() { striker ??= newId; });
-                      },
-                      child: const Text('Add'),
-                    ),
-                  ],
+                builder: (_) => _AddPlayerInlineDialog(
+                  title: 'নতুন Batsman যোগ করুন',
+                  onAdd: (name) {
+                    final newId = provider.addTempPlayer(name, innings.teamId, match);
+                    setS(() { striker ??= newId; });
+                  },
                 ),
               );
             }
 
             void addBowler() {
-              final ctrl = TextEditingController();
               showDialog(
                 context: ctx2,
-                builder: (_) => AlertDialog(
-                  title: const Text('নতুন Bowler যোগ করুন'),
-                  content: TextField(
-                    controller: ctrl,
-                    autofocus: true,
-                    textCapitalization: TextCapitalization.words,
-                    decoration: const InputDecoration(labelText: 'Player নাম'),
-                  ),
-                  actions: [
-                    TextButton(onPressed: () => Navigator.pop(ctx2), child: const Text('বাতিল')),
-                    ElevatedButton(
-                      onPressed: () {
-                        final name = ctrl.text.trim();
-                        if (name.isEmpty) return;
-                        final newId = provider.addTempPlayer(name, bowlingTeamId, match);
-                        Navigator.pop(ctx2);
-                        setS(() { bowler ??= newId; });
-                      },
-                      child: const Text('Add'),
-                    ),
-                  ],
+                builder: (_) => _AddPlayerInlineDialog(
+                  title: 'নতুন Bowler যোগ করুন',
+                  onAdd: (name) {
+                    final newId = provider.addTempPlayer(name, bowlingTeamId, match);
+                    setS(() { bowler ??= newId; });
+                  },
                 ),
               );
             }
@@ -478,9 +453,9 @@ class _ScoringScreenState extends State<ScoringScreen> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               decoration: BoxDecoration(
-                color: Colors.orange.withOpacity(0.1),
+                color: Colors.orange.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.orange.withOpacity(0.4)),
+                border: Border.all(color: Colors.orange.withValues(alpha: 0.4)),
               ),
               child: const Row(children: [
                 Icon(Icons.info_outline, size: 16, color: Colors.orange),
@@ -519,30 +494,21 @@ class _ScoringScreenState extends State<ScoringScreen> {
   }
 
   void _showWicketDialog(BuildContext context, AppProvider provider,
-      CricketMatch match, Innings innings) {
+      CricketMatch match, Innings innings, {bool showBowlerAfter = false}) {
 
     final battingTeamPlayers =
     provider.getTeamPlayersForMatch(innings.teamId, match);
+    // striker out হচ্ছে, non-striker মাঠে আছে, reserve বাদ
     final available = battingTeamPlayers
         .where((p) =>
     !p.isOut &&
+        !p.isReserve &&
+        p.id != innings.strikerBatsmanId &&
         p.id != innings.nonStrikerBatsmanId)
         .toList();
 
-
-    if (available.isEmpty) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('All out! Innings completed.'),
-              duration: Duration(seconds: 2),
-            ),
-          );
-        }
-      });
-      return;
-    }
+    // আর কেউ নেই — all out, dialog দেখানোর দরকার নেই
+    if (available.isEmpty) return;
     String? nextBatsman = available.isNotEmpty ? available[0].id : null;
 
     showDialog(
@@ -556,34 +522,20 @@ class _ScoringScreenState extends State<ScoringScreen> {
                 .getTeamPlayersForMatch(innings.teamId, match)
                 .where((p) =>
             !p.isOut &&
+                !p.isReserve &&
+                p.id != innings.strikerBatsmanId &&
                 p.id != innings.nonStrikerBatsmanId)
                 .toList();
 
             void addBatsman() {
-              final ctrl = TextEditingController();
               showDialog(
                 context: ctx2,
-                builder: (_) => AlertDialog(
-                  title: const Text('নতুন Batsman যোগ করুন'),
-                  content: TextField(
-                    controller: ctrl,
-                    autofocus: true,
-                    textCapitalization: TextCapitalization.words,
-                    decoration: const InputDecoration(labelText: 'Player নাম'),
-                  ),
-                  actions: [
-                    TextButton(onPressed: () => Navigator.pop(ctx2), child: const Text('বাতিল')),
-                    ElevatedButton(
-                      onPressed: () {
-                        final name = ctrl.text.trim();
-                        if (name.isEmpty) return;
-                        final newId = provider.addTempPlayer(name, innings.teamId, match);
-                        Navigator.pop(ctx2);
-                        setS(() => nextBatsman = newId);
-                      },
-                      child: const Text('Add'),
-                    ),
-                  ],
+                builder: (_) => _AddPlayerInlineDialog(
+                  title: 'নতুন Batsman যোগ করুন',
+                  onAdd: (name) {
+                    final newId = provider.addTempPlayer(name, innings.teamId, match);
+                    setS(() => nextBatsman = newId);
+                  },
                 ),
               );
             }
@@ -672,6 +624,14 @@ class _ScoringScreenState extends State<ScoringScreen> {
                           if (mounted) setState(() => _milestoneText = null);
                         });
                       }
+                      // Over শেষ হলে bowler dialog দেখাও
+                      if (showBowlerAfter) {
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          if (mounted) {
+                            _showChangeBowlerDialog(context, provider, match);
+                          }
+                        });
+                      }
                     }
                   },
                   child: const Text('Confirm'),
@@ -692,13 +652,22 @@ class _ScoringScreenState extends State<ScoringScreen> {
     final bowlingTeamId = innings.teamId == match.hostTeamId
         ? match.visitorTeamId
         : match.hostTeamId;
-    final bowlers =
-    provider.getTeamPlayersForMatch(bowlingTeamId, match);
-    final available =
-    bowlers.where((p) => p.id != innings.currentBowlerId).toList();
+    final bowlers = provider.getTeamPlayersForMatch(bowlingTeamId, match);
 
-    if (available.isEmpty) return;
-    String? newBowler = available[0].id;
+    // আগের over এর bowler — consecutive over করতে পারবে না
+    final lastOverBowlerId = provider.getLastOverBowlerId(innings);
+
+    final available = bowlers.where((p) =>
+    p.id != innings.currentBowlerId &&
+        p.id != lastOverBowlerId).toList();
+
+    // player কম হলে restriction তুলে দাও
+    final initialList = available.isEmpty
+        ? bowlers.where((p) => p.id != innings.currentBowlerId).toList()
+        : available;
+
+    if (initialList.isEmpty) return;
+    String? newBowler = initialList[0].id;
 
     showDialog(
       context: context,
@@ -707,36 +676,23 @@ class _ScoringScreenState extends State<ScoringScreen> {
         canPop: false,
         child: StatefulBuilder(
           builder: (ctx2, setS) {
-            final latestAvailable = provider
-                .getTeamPlayersForMatch(bowlingTeamId, match)
-                .where((p) => p.id != innings.currentBowlerId)
-                .toList();
+            final latestAll = provider.getTeamPlayersForMatch(bowlingTeamId, match);
+            final latestRestricted = latestAll.where((p) =>
+            p.id != innings.currentBowlerId &&
+                p.id != lastOverBowlerId).toList();
+            final latestAvailable = latestRestricted.isEmpty
+                ? latestAll.where((p) => p.id != innings.currentBowlerId).toList()
+                : latestRestricted;
 
             void addBowler() {
-              final ctrl = TextEditingController();
               showDialog(
                 context: ctx2,
-                builder: (_) => AlertDialog(
-                  title: const Text('নতুন Bowler যোগ করুন'),
-                  content: TextField(
-                    controller: ctrl,
-                    autofocus: true,
-                    textCapitalization: TextCapitalization.words,
-                    decoration: const InputDecoration(labelText: 'Player নাম'),
-                  ),
-                  actions: [
-                    TextButton(onPressed: () => Navigator.pop(ctx2), child: const Text('বাতিল')),
-                    ElevatedButton(
-                      onPressed: () {
-                        final name = ctrl.text.trim();
-                        if (name.isEmpty) return;
-                        final newId = provider.addTempPlayer(name, bowlingTeamId, match);
-                        Navigator.pop(ctx2);
-                        setS(() => newBowler = newId);
-                      },
-                      child: const Text('Add'),
-                    ),
-                  ],
+                builder: (_) => _AddPlayerInlineDialog(
+                  title: 'নতুন Bowler যোগ করুন',
+                  onAdd: (name) {
+                    final newId = provider.addTempPlayer(name, bowlingTeamId, match);
+                    setS(() => newBowler = newId);
+                  },
                 ),
               );
             }
@@ -773,11 +729,32 @@ class _ScoringScreenState extends State<ScoringScreen> {
               );
             }
 
+            // যদি restriction এর কারণে fallback হয়, note দেখাও
+            final isUsingFallback = latestRestricted.isEmpty && latestAvailable.isNotEmpty;
+
             return AlertDialog(
               title: Text('End of Over — New Bowler',
                   style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
               content: SingleChildScrollView(
                 child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  if (isUsingFallback)
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.orange.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.orange.withValues(alpha: 0.4)),
+                      ),
+                      child: Row(children: [
+                        const Icon(Icons.info_outline, size: 14, color: Colors.orange),
+                        const SizedBox(width: 6),
+                        Expanded(child: Text(
+                          'Consecutive over restriction lifted (not enough players)',
+                          style: GoogleFonts.poppins(fontSize: 11, color: Colors.orange),
+                        )),
+                      ]),
+                    ),
                   Row(children: [
                     Expanded(
                       child: Text('Bowling Team Players',
@@ -893,21 +870,24 @@ class _ScoreHeader extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(battingTeam?.name ?? 'Batting',
-                        style: const TextStyle(
-                            color: Colors.white70, fontSize: 13)),
-                    Text(
-                      '${innings.totalRuns} - ${innings.wickets}',
-                      style: GoogleFonts.poppins(
-                          color: Colors.white,
-                          fontSize: 40,
-                          fontWeight: FontWeight.bold),
-                    ),
-                  ]),
-              const Spacer(),
+              Expanded(
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(battingTeam?.name ?? 'Batting',
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 1,
+                          style: const TextStyle(
+                              color: Colors.white70, fontSize: 13)),
+                      Text(
+                        '${innings.totalRuns} - ${innings.wickets}',
+                        style: GoogleFonts.poppins(
+                            color: Colors.white,
+                            fontSize: 40,
+                            fontWeight: FontWeight.bold),
+                      ),
+                    ]),
+              ),
               Column(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
@@ -951,39 +931,18 @@ class _ScoreHeader extends StatelessWidget {
   }
 
   void _showEditOversDialog(BuildContext context, AppProvider provider, CricketMatch match) {
-    final controller = TextEditingController(text: match.totalOvers.toString());
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('Change Total Overs', style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
-        content: TextField(
-          controller: controller,
-          keyboardType: TextInputType.number,
-          decoration: const InputDecoration(
-            labelText: 'New Overs Limit',
-            hintText: 'Enter number of overs',
-          ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-          ElevatedButton(
-            onPressed: () {
-              final val = int.tryParse(controller.text);
-              if (val != null && val > 0) {
-                final inningsCompleted = provider.updateMatchOvers(val);
-                Navigator.pop(ctx);
-                if (inningsCompleted) {
-
-                  onInningsReset?.call();
-                } else {
-
-                  onInningsContinue?.call();
-                }
-              }
-            },
-            child: const Text('Update'),
-          ),
-        ],
+      builder: (_) => _EditOversDialog(
+        currentOvers: match.totalOvers,
+        onUpdate: (val) {
+          final inningsCompleted = provider.updateMatchOvers(val);
+          if (inningsCompleted) {
+            onInningsReset?.call();
+          } else {
+            onInningsContinue?.call();
+          }
+        },
       ),
     );
   }
@@ -1022,7 +981,7 @@ class _BatsmenInfo extends StatelessWidget {
               child: Container(
                 padding: const EdgeInsets.all(4),
                 decoration: BoxDecoration(
-                  color: AppTheme.primary.withOpacity(0.1),
+                  color: AppTheme.primary.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: const Icon(Icons.swap_vert,
@@ -1166,34 +1125,11 @@ class _BatsmenInfo extends StatelessWidget {
   }
 
   void _showEditNameDialog(BuildContext context, Player p) {
-    final ctrl = TextEditingController(text: p.name);
     showDialog(
       context: context,
-      builder: (_) => AlertDialog(
-        title: Text('Edit Name',
-            style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
-        content: TextField(
-          controller: ctrl,
-          autofocus: true,
-          decoration: const InputDecoration(
-            labelText: 'Player Name',
-            border: OutlineInputBorder(),
-          ),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel')),
-          ElevatedButton(
-            onPressed: () {
-              if (ctrl.text.trim().isNotEmpty) {
-                provider.renameTempPlayer(p.id, ctrl.text.trim(), match);
-                Navigator.pop(context);
-              }
-            },
-            child: const Text('Save'),
-          ),
-        ],
+      builder: (_) => _EditNameDialog(
+        initialName: p.name,
+        onSave: (name) => provider.renameTempPlayer(p.id, name, match),
       ),
     );
   }
@@ -1277,6 +1213,8 @@ class _BowlerInfo extends StatelessWidget {
               onTap: () => _showChangeBowler(context, bowler),
               child: Row(children: [
                 Flexible(child: Text(bowler?.name ?? 'Bowler',
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
                     style: GoogleFonts.poppins(fontWeight: FontWeight.w600))),
                 const SizedBox(width: 4),
                 const Icon(Icons.keyboard_arrow_down,
@@ -1284,6 +1222,7 @@ class _BowlerInfo extends StatelessWidget {
               ]),
             ),
           ),
+          const SizedBox(width: 4),
           for (final kv in [
             ('O', bowler?.oversBowledDisplay ?? '0.0'),
             ('M', '${bowler?.maidens ?? 0}'),
@@ -1292,14 +1231,14 @@ class _BowlerInfo extends StatelessWidget {
             ('Eco', bowler?.bowlingEconomy.toStringAsFixed(2) ?? '0.00'),
           ])
             Padding(
-              padding: const EdgeInsets.only(left: 12),
+              padding: const EdgeInsets.only(left: 8),
               child: Column(children: [
                 Text(kv.$1,
                     style: const TextStyle(
                         fontSize: 10, color: AppTheme.textSecondary)),
                 Text(kv.$2,
                     style: GoogleFonts.poppins(
-                        fontWeight: FontWeight.w600, fontSize: 13)),
+                        fontWeight: FontWeight.w600, fontSize: 12)),
               ]),
             ),
         ]),
@@ -1309,32 +1248,13 @@ class _BowlerInfo extends StatelessWidget {
 
   void _showEditBowlerName(BuildContext context, Player? bowler) {
     if (bowler == null) return;
-    final ctrl = TextEditingController(text: bowler.name);
     showDialog(
       context: context,
-      builder: (_) => AlertDialog(
-        title: Text('Edit Bowler Name',
-            style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
-        content: TextField(
-          controller: ctrl,
-          autofocus: true,
-          decoration: const InputDecoration(
-              labelText: 'Bowler Name', border: OutlineInputBorder()),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel')),
-          ElevatedButton(
-            onPressed: () {
-              if (ctrl.text.trim().isNotEmpty) {
-                provider.renameTempPlayer(bowler.id, ctrl.text.trim(), match);
-                Navigator.pop(context);
-              }
-            },
-            child: const Text('Save'),
-          ),
-        ],
+      builder: (_) => _EditNameDialog(
+        initialName: bowler.name,
+        title: 'Edit Bowler Name',
+        label: 'Bowler Name',
+        onSave: (name) => provider.renameTempPlayer(bowler.id, name, match),
       ),
     );
   }
@@ -1534,6 +1454,7 @@ class _NextBatsmenInfo extends StatelessWidget {
 
     final waitingBatsmen = allPlayers.where((p) =>
     !p.isOut &&
+        !p.isReserve &&  // reserve player আলাদা section এ থাকবে
         p.id != innings.strikerBatsmanId &&
         p.id != innings.nonStrikerBatsmanId).toList();
 
@@ -1548,11 +1469,12 @@ class _NextBatsmenInfo extends StatelessWidget {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-
               const Text('Next Batsmen ',
                   style: TextStyle(fontSize: 12, color: AppTheme.textSecondary)),
-              Text('($count)',
-                  style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary)),
+              Flexible(
+                child: Text('($count)',
+                    style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary)),
+              ),
             ],
           ),
           const SizedBox(height: 2),
@@ -1565,6 +1487,194 @@ class _NextBatsmenInfo extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+// ── Reserve Players Panel ────────────────────────────────────────────────────
+
+class _ReservePlayersPanel extends StatelessWidget {
+  final CricketMatch match;
+  final Innings innings;
+  final AppProvider provider;
+
+  const _ReservePlayersPanel({
+    required this.match,
+    required this.innings,
+    required this.provider,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final allPlayers = provider.getTeamPlayersForMatch(innings.teamId, match);
+    final reservePlayers = allPlayers.where((p) => p.isReserve && !p.isOut).toList();
+
+    if (reservePlayers.isEmpty) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            const Text('Reserve ',
+                style: TextStyle(fontSize: 12, color: Colors.orange)),
+            Text('(${reservePlayers.length})',
+                style: const TextStyle(fontSize: 12, color: Colors.orange)),
+            const SizedBox(width: 8),
+            GestureDetector(
+              onTap: () => _showSubstituteDialog(context),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.orange.withValues(alpha: 0.4)),
+                ),
+                child: const Text('Substitute',
+                    style: TextStyle(fontSize: 11, color: Colors.orange,
+                        fontWeight: FontWeight.w600)),
+              ),
+            ),
+          ]),
+          const SizedBox(height: 2),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Text(
+              reservePlayers.map((p) => p.name).join(' | '),
+              style: const TextStyle(fontSize: 12, color: Colors.orange),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showSubstituteDialog(BuildContext context) {
+    final allPlayers = provider.getTeamPlayersForMatch(innings.teamId, match);
+    final reservePlayers = allPlayers.where((p) => p.isReserve && !p.isOut).toList();
+    final mainPlayers = allPlayers.where((p) =>
+    !p.isReserve && !p.isOut &&
+        p.id != innings.strikerBatsmanId &&
+        p.id != innings.nonStrikerBatsmanId).toList();
+
+    if (reservePlayers.isEmpty || mainPlayers.isEmpty) return;
+
+    String? selectedReserve = reservePlayers.first.id;
+    String? selectedMain = mainPlayers.first.id;
+
+    showDialog(
+      context: context,
+      builder: (_) => StatefulBuilder(
+        builder: (ctx2, setS) => AlertDialog(
+          insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+          title: Row(children: [
+            const Icon(Icons.swap_horiz, color: Colors.orange),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text('Substitute Player',
+                  style: GoogleFonts.poppins(
+                      fontWeight: FontWeight.bold,
+                      color: Colors.orange,
+                      fontSize: 16)),
+            ),
+          ]),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: SingleChildScrollView(
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                // Reserve player (আসবে)
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.green.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    const Text('IN (Reserve)',
+                        style: TextStyle(fontSize: 11, color: Colors.green,
+                            fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 6),
+                    DropdownButtonFormField<String>(
+                      isExpanded: true,
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        border: OutlineInputBorder(),
+                        contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                      ),
+                      value: selectedReserve,
+                      items: reservePlayers.map((p) => DropdownMenuItem(
+                        value: p.id,
+                        child: Text(p.name, overflow: TextOverflow.ellipsis),
+                      )).toList(),
+                      onChanged: (v) => setS(() => selectedReserve = v),
+                    ),
+                  ]),
+                ),
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 8),
+                  child: Row(children: [
+                    Expanded(child: Divider()),
+                    Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 8),
+                      child: Icon(Icons.swap_vert, color: Colors.grey),
+                    ),
+                    Expanded(child: Divider()),
+                  ]),
+                ),
+                // Main player (বাইরে যাবে)
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.red.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    const Text('OUT (যাবে)',
+                        style: TextStyle(fontSize: 11, color: Colors.red,
+                            fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 6),
+                    DropdownButtonFormField<String>(
+                      isExpanded: true,
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        border: OutlineInputBorder(),
+                        contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                      ),
+                      value: selectedMain,
+                      items: mainPlayers.map((p) => DropdownMenuItem(
+                        value: p.id,
+                        child: Text(p.name, overflow: TextOverflow.ellipsis),
+                      )).toList(),
+                      onChanged: (v) => setS(() => selectedMain = v),
+                    ),
+                  ]),
+                ),
+              ]),
+            ),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx2),
+                child: const Text('Cancel')),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+              onPressed: () {
+                if (selectedReserve != null && selectedMain != null) {
+                  provider.substituteReservePlayer(
+                    match: match,
+                    reservePlayerId: selectedReserve!,
+                    outPlayerId: selectedMain!,
+                    innings: innings,
+                  );
+                  Navigator.pop(ctx2);
+                }
+              },
+              child: const Text('Confirm'),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1652,7 +1762,7 @@ class _ScoringPad extends StatefulWidget {
   final CricketMatch match;
   final Innings innings;
   final AppProvider provider;
-  final VoidCallback onWicket;
+  final void Function({bool showBowlerAfter}) onWicket;
   final VoidCallback onOverEnd;
   final ValueChanged<String> onMilestone;
 
@@ -1675,6 +1785,32 @@ class _ScoringPadState extends State<_ScoringPad> {
   bool _bye = false;
   bool _legBye = false;
   bool _freeHit = false;
+
+  // innings বদলালে (1st → 2nd) সব flag reset করো
+  String? _lastInningsTeamId;
+
+  @override
+  void didUpdateWidget(_ScoringPad oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final newTeamId = widget.innings.teamId;
+    if (_lastInningsTeamId != null && _lastInningsTeamId != newTeamId) {
+      // নতুন innings শুরু — সব extra/freeHit flag clear
+      setState(() {
+        _wide = false;
+        _noBall = false;
+        _bye = false;
+        _legBye = false;
+        _freeHit = false;
+      });
+    }
+    _lastInningsTeamId = newTeamId;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _lastInningsTeamId = widget.innings.teamId;
+  }
 
   void _addBall(int runs, {bool isWicket = false, String? dismissalType, String? fielderId}) {
     if (widget.innings.strikerBatsmanId == null) return;
@@ -1738,25 +1874,28 @@ class _ScoringPadState extends State<_ScoringPad> {
       _noBall = false;
     });
 
+    final isLegal = type != BallType.wide && type != BallType.noBall;
+
+    // over শেষ check — addBall এর পর totalBalls দিয়ে check করো
+    // prevLegalBalls + 1 এর বদলে addBall এর পরের actual value ব্যবহার করো
+    final updatedInnings = widget.provider.currentInnings;
+    final overJustEnded = isLegal &&
+        updatedInnings != null &&
+        updatedInnings.totalBalls % 6 == 0 &&
+        updatedInnings.totalBalls > 0;
 
     if (isNoBallRunOut || effectiveIsWicket) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        widget.onWicket();
+        widget.onWicket(showBowlerAfter: overJustEnded);
       });
       return;
     }
 
-    final isLegal =
-        type != BallType.wide && type != BallType.noBall;
-    if (isLegal) {
-      final newLegalBalls = prevLegalBalls + 1;
-      if (newLegalBalls % 6 == 0) {
-        // Over end Free Hit reset
-        setState(() => _freeHit = false);
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          widget.onOverEnd();
-        });
-      }
+    if (overJustEnded) {
+      setState(() => _freeHit = false);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        widget.onOverEnd();
+      });
     }
   }
 
@@ -2186,7 +2325,7 @@ class _RunButton extends StatelessWidget {
         width: 40,
         height: 40,
         decoration: BoxDecoration(
-          border: Border.all(color: color.withOpacity(0.5)),
+          border: Border.all(color: color.withValues(alpha: 0.5)),
           borderRadius: BorderRadius.circular(8),
         ),
         child: Center(
@@ -2202,4 +2341,183 @@ class _RunButton extends StatelessWidget {
       ),
     );
   }
+}
+
+// ── Reusable Dialogs — proper dispose সহ ──────────────────────────────────────
+
+/// Player নাম edit করার dialog — controller properly dispose হয়
+class _EditNameDialog extends StatefulWidget {
+  final String initialName;
+  final String title;
+  final String label;
+  final void Function(String name) onSave;
+
+  const _EditNameDialog({
+    required this.initialName,
+    required this.onSave,
+    this.title = 'Edit Name',
+    this.label = 'Player Name',
+  });
+
+  @override
+  State<_EditNameDialog> createState() => _EditNameDialogState();
+}
+
+class _EditNameDialogState extends State<_EditNameDialog> {
+  late TextEditingController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = TextEditingController(text: widget.initialName);
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: Text(widget.title,
+        style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
+    content: TextField(
+      controller: _ctrl,
+      autofocus: true,
+      decoration: InputDecoration(
+        labelText: widget.label,
+        border: const OutlineInputBorder(),
+      ),
+    ),
+    actions: [
+      TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel')),
+      ElevatedButton(
+        onPressed: () {
+          if (_ctrl.text.trim().isNotEmpty) {
+            widget.onSave(_ctrl.text.trim());
+            Navigator.pop(context);
+          }
+        },
+        child: const Text('Save'),
+      ),
+    ],
+  );
+}
+
+/// Overs edit করার dialog — controller properly dispose হয়
+class _EditOversDialog extends StatefulWidget {
+  final int currentOvers;
+  final void Function(int overs) onUpdate;
+
+  const _EditOversDialog({
+    required this.currentOvers,
+    required this.onUpdate,
+  });
+
+  @override
+  State<_EditOversDialog> createState() => _EditOversDialogState();
+}
+
+class _EditOversDialogState extends State<_EditOversDialog> {
+  late TextEditingController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = TextEditingController(text: widget.currentOvers.toString());
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: Text('Change Total Overs',
+        style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
+    content: TextField(
+      controller: _ctrl,
+      keyboardType: TextInputType.number,
+      autofocus: true,
+      decoration: const InputDecoration(
+        labelText: 'New Overs Limit',
+        hintText: 'Enter number of overs',
+      ),
+    ),
+    actions: [
+      TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel')),
+      ElevatedButton(
+        onPressed: () {
+          final val = int.tryParse(_ctrl.text.trim());
+          if (val != null && val > 0) {
+            Navigator.pop(context);
+            widget.onUpdate(val);
+          }
+        },
+        child: const Text('Update'),
+      ),
+    ],
+  );
+}
+
+/// Inline player add dialog (scoring screen এ) — controller properly dispose হয়
+class _AddPlayerInlineDialog extends StatefulWidget {
+  final String title;
+  final void Function(String name) onAdd;
+
+  const _AddPlayerInlineDialog({
+    required this.title,
+    required this.onAdd,
+  });
+
+  @override
+  State<_AddPlayerInlineDialog> createState() => _AddPlayerInlineDialogState();
+}
+
+class _AddPlayerInlineDialogState extends State<_AddPlayerInlineDialog> {
+  late TextEditingController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: Text(widget.title),
+    content: TextField(
+      controller: _ctrl,
+      autofocus: true,
+      textCapitalization: TextCapitalization.words,
+      decoration: const InputDecoration(labelText: 'Player নাম'),
+    ),
+    actions: [
+      TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('বাতিল')),
+      ElevatedButton(
+        onPressed: () {
+          final name = _ctrl.text.trim();
+          if (name.isEmpty) return;
+          Navigator.pop(context);
+          widget.onAdd(name);
+        },
+        child: const Text('Add'),
+      ),
+    ],
+  );
 }

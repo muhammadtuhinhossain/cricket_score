@@ -12,6 +12,7 @@ class Player {
   int sixes;
   bool isOut;
   String? dismissalInfo;
+  bool isReserve; // Reserve player — match এ substitute হিসেবে আসবে
 
   // Bowling stats
   int oversBowled;
@@ -30,6 +31,7 @@ class Player {
     this.sixes = 0,
     this.isOut = false,
     this.dismissalInfo,
+    this.isReserve = false,
     this.oversBowled = 0,
     this.runsConceded = 0,
     this.wickets = 0,
@@ -53,7 +55,8 @@ class Player {
   Map<String, dynamic> toJson() => {
     'id': id, 'name': name, 'runs': runs, 'balls': balls,
     'fours': fours, 'sixes': sixes, 'isOut': isOut,
-    'dismissalInfo': dismissalInfo, 'oversBowled': oversBowled,
+    'dismissalInfo': dismissalInfo, 'isReserve': isReserve,
+    'oversBowled': oversBowled,
     'runsConceded': runsConceded, 'wickets': wickets,
     'maidens': maidens, 'wides': wides, 'noBalls': noBalls,
   };
@@ -63,16 +66,18 @@ class Player {
     balls: j['balls'] ?? 0, fours: j['fours'] ?? 0,
     sixes: j['sixes'] ?? 0, isOut: j['isOut'] ?? false,
     dismissalInfo: j['dismissalInfo'],
+    isReserve: j['isReserve'] ?? false,
     oversBowled: j['oversBowled'] ?? 0,
     runsConceded: j['runsConceded'] ?? 0,
     wickets: j['wickets'] ?? 0, maidens: j['maidens'] ?? 0,
     wides: j['wides'] ?? 0, noBalls: j['noBalls'] ?? 0,
   );
 
-  Player copyWith({String? name}) =>
+  Player copyWith({String? name, bool? isReserve}) =>
       Player(id: id, name: name ?? this.name, runs: runs,
           balls: balls, fours: fours, sixes: sixes, isOut: isOut,
-          dismissalInfo: dismissalInfo, oversBowled: oversBowled,
+          dismissalInfo: dismissalInfo, isReserve: isReserve ?? this.isReserve,
+          oversBowled: oversBowled,
           runsConceded: runsConceded, wickets: wickets,
           maidens: maidens, wides: wides, noBalls: noBalls);
 }

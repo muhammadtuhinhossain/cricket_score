@@ -3,7 +3,9 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../models/models.dart';
+import '../models/tournament_models.dart';
 import '../provider/app_provider.dart';
+import '../provider/tournament_provider.dart';
 import '../utils/theme.dart';
 import 'new_match_screen.dart';
 import 'scoring_screen.dart';
@@ -38,6 +40,59 @@ class _HomeScreenState extends State<HomeScreen> {
               onPressed: () => Navigator.push(context,
                   MaterialPageRoute(builder: (_) => const _ArchiveScreen())),
             ),
+          IconButton(
+            icon: const Icon(Icons.info_outline),
+            tooltip: 'About',
+            onPressed: () => showDialog(
+              context: context,
+              builder: (_) => AlertDialog(
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16)),
+                content: Column(mainAxisSize: MainAxisSize.min, children: [
+                  Container(
+                    width: 64, height: 64,
+                    decoration: BoxDecoration(
+                      color: AppTheme.primary.withValues(alpha: 0.1),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(Icons.sports_cricket,
+                        size: 36, color: AppTheme.primary),
+                  ),
+                  const SizedBox(height: 12),
+                  Text('Cricket Scorer',
+                      style: GoogleFonts.poppins(
+                          fontSize: 18, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 16),
+                  const Divider(),
+                  const SizedBox(height: 12),
+                  Text('Made by',
+                      style: TextStyle(
+                          fontSize: 12, color: AppTheme.textSecondary)),
+                  const SizedBox(height: 4),
+                  Text('Muhammad Tuhin Hasan',
+                      style: GoogleFonts.poppins(
+                          fontSize: 15, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 6),
+                  Row(mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.location_on,
+                            size: 14, color: AppTheme.textSecondary),
+                        const SizedBox(width: 4),
+                        Text('Vitapara, Santhia, Pabna',
+                            style: TextStyle(
+                                fontSize: 12, color: AppTheme.textSecondary)),
+                      ]),
+                  const SizedBox(height: 12),
+                ]),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('Close'),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ],
       ),
       body: IndexedStack(
@@ -81,28 +136,153 @@ class _HomeScreenState extends State<HomeScreen> {
 
 // match list tab
 
-class _MatchListTab extends StatelessWidget {
+class _MatchListTab extends StatefulWidget {
   const _MatchListTab();
 
   @override
-  Widget build(BuildContext context) {
-    return Consumer<AppProvider>(builder: (ctx, provider, _) {
-      final matches = provider.recentMatches;
-      if (matches.isEmpty) return _EmptyMatches();
-      return ListView.builder(
-        padding: const EdgeInsets.fromLTRB(12, 12, 12, 80),
-        itemCount: matches.length,
-        itemBuilder: (_, i) =>
-            _MatchCard(match: matches[i], provider: provider),
-      );
+  State<_MatchListTab> createState() => _MatchListTabState();
+}
+
+class _MatchListTabState extends State<_MatchListTab> {
+  final Set<String> _selected = {};
+  bool get _selectMode => _selected.isNotEmpty;
+
+  void _toggleSelect(String id) {
+    setState(() {
+      if (_selected.contains(id)) {
+        _selected.remove(id);
+      } else {
+        _selected.add(id);
+      }
     });
+  }
+
+  void _selectAll(List<CricketMatch> matches) {
+    setState(() {
+      _selected.addAll(matches.map((m) => m.id));
+    });
+  }
+
+  void _clearSelection() {
+    setState(() => _selected.clear());
+  }
+
+  void _deleteSelected(AppProvider provider) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Delete Matches?'),
+        content: Text(
+            '${_selected.length}টি match delete হবে। এটা undo করা যাবে না।'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('বাতিল')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () {
+              Navigator.pop(context);
+              for (final id in _selected) {
+                provider.deleteMatch(id);
+              }
+              _clearSelection();
+            },
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer2<AppProvider, TournamentProvider>(
+        builder: (ctx, provider, tProvider, _) {
+          final matches = provider.recentMatches;
+          if (matches.isEmpty) return _EmptyMatches();
+
+          // tournament match id → tournament name map
+          final Map<String, String> cricketMatchTournamentName = {};
+          for (final t in tProvider.tournaments) {
+            for (final m in t.matches) {
+              if (m.cricketMatchId != null) {
+                cricketMatchTournamentName[m.cricketMatchId!] = t.name;
+              }
+            }
+          }
+
+          return Column(children: [
+            // select mode top bar
+            if (_selectMode)
+              Container(
+                color: AppTheme.primary,
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                child: Row(children: [
+                  IconButton(
+                    icon: const Icon(Icons.close, color: Colors.white),
+                    onPressed: _clearSelection,
+                    tooltip: 'Cancel',
+                  ),
+                  Text('${_selected.length} selected',
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 15)),
+                  const Spacer(),
+                  TextButton(
+                    onPressed: () => _selectAll(matches),
+                    child: const Text('Select All',
+                        style: TextStyle(color: Colors.white70)),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.delete, color: Colors.white),
+                    onPressed: () => _deleteSelected(provider),
+                    tooltip: 'Delete selected',
+                  ),
+                ]),
+              ),
+            Expanded(
+              child: ListView.builder(
+                padding: const EdgeInsets.fromLTRB(12, 12, 12, 80),
+                itemCount: matches.length,
+                itemBuilder: (_, i) {
+                  final match = matches[i];
+                  final isSelected = _selected.contains(match.id);
+                  return _MatchCard(
+                    match: match,
+                    provider: provider,
+                    tournamentName: cricketMatchTournamentName[match.id],
+                    isSelected: isSelected,
+                    selectMode: _selectMode,
+                    onSelect: () => _toggleSelect(match.id),
+                    onLongPress: () => _toggleSelect(match.id),
+                  );
+                },
+              ),
+            ),
+          ]);
+        });
   }
 }
 
 class _MatchCard extends StatelessWidget {
   final CricketMatch match;
   final AppProvider provider;
-  const _MatchCard({required this.match, required this.provider});
+  final String? tournamentName;
+  final bool isSelected;
+  final bool selectMode;
+  final VoidCallback onSelect;
+  final VoidCallback onLongPress;
+
+  const _MatchCard({
+    required this.match,
+    required this.provider,
+    this.tournamentName,
+    this.isSelected = false,
+    this.selectMode = false,
+    required this.onSelect,
+    required this.onLongPress,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -110,12 +290,22 @@ class _MatchCard extends StatelessWidget {
     final visitorTeam = provider.getTeam(match.visitorTeamId);
     final isLive = match.status == MatchStatus.inProgress;
     final isCompleted = match.status == MatchStatus.completed;
+    final isTournamentMatch = tournamentName != null;
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
+      color: isSelected ? AppTheme.primary.withValues(alpha: 0.07) : null,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: isSelected
+            ? BorderSide(color: AppTheme.primary.withValues(alpha: 0.5), width: 1.5)
+            : BorderSide.none,
+      ),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
+        onLongPress: onLongPress,
         onTap: () {
+          if (selectMode) { onSelect(); return; }
           if (isLive) {
             Navigator.push(context, MaterialPageRoute(
                 builder: (_) => ScoringScreen(matchId: match.id)));
@@ -128,6 +318,16 @@ class _MatchCard extends StatelessWidget {
           padding: const EdgeInsets.all(16),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Row(children: [
+              if (selectMode) ...[
+                Checkbox(
+                  value: isSelected,
+                  activeColor: AppTheme.primary,
+                  onChanged: (_) => onSelect(),
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  visualDensity: VisualDensity.compact,
+                ),
+                const SizedBox(width: 4),
+              ],
               if (isLive) ...[
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
@@ -141,23 +341,76 @@ class _MatchCard extends StatelessWidget {
                         fontWeight: FontWeight.bold)),
                   ]),
                 ),
+                const SizedBox(width: 6),
               ],
+              if (isTournamentMatch)
+                Tooltip(
+                  message: tournamentName!,
+                  triggerMode: TooltipTriggerMode.tap,
+                  preferBelow: true,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 130),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: AppTheme.primary.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(
+                            color: AppTheme.primary.withValues(alpha: 0.3), width: 1),
+                      ),
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        Icon(Icons.emoji_events, size: 10, color: AppTheme.primary),
+                        const SizedBox(width: 4),
+                        Flexible(
+                          child: Text(
+                            tournamentName!,
+                            overflow: TextOverflow.ellipsis,
+                            maxLines: 1,
+                            style: TextStyle(
+                                color: AppTheme.primary,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                      ]),
+                    ),
+                  ),
+                )
+              else
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade100,
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(color: Colors.grey.shade300, width: 1),
+                  ),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    Icon(Icons.sports_cricket, size: 10, color: AppTheme.textSecondary),
+                    const SizedBox(width: 4),
+                    Text('Single Match',
+                        style: TextStyle(
+                            color: AppTheme.textSecondary,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w600)),
+                  ]),
+                ),
               const Spacer(),
               Text(DateFormat('d MMM, HH:mm').format(match.createdAt),
                   style: const TextStyle(
                       fontSize: 11, color: AppTheme.textSecondary)),
-              PopupMenuButton<String>(
-                icon: const Icon(Icons.more_vert, size: 18),
-                onSelected: (v) {
-                  if (v == 'archive') provider.archiveMatch(match.id);
-                  if (v == 'delete') provider.deleteMatch(match.id);
-                },
-                itemBuilder: (_) => [
-                  const PopupMenuItem(value: 'archive', child: Text('Archive')),
-                  const PopupMenuItem(value: 'delete',
-                      child: Text('Delete', style: TextStyle(color: Colors.red))),
-                ],
-              ),
+              if (!selectMode)
+                PopupMenuButton<String>(
+                  icon: const Icon(Icons.more_vert, size: 18),
+                  onSelected: (v) {
+                    if (v == 'archive') provider.archiveMatch(match.id);
+                    if (v == 'delete') provider.deleteMatch(match.id);
+                  },
+                  itemBuilder: (_) => [
+                    const PopupMenuItem(value: 'archive', child: Text('Archive')),
+                    const PopupMenuItem(value: 'delete',
+                        child: Text('Delete', style: TextStyle(color: Colors.red))),
+                  ],
+                ),
             ]),
             const SizedBox(height: 8),
             Row(children: [
@@ -188,7 +441,7 @@ class _MatchCard extends StatelessWidget {
                 width: double.infinity,
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                 decoration: BoxDecoration(
-                  color: AppTheme.primary.withOpacity(0.08),
+                  color: AppTheme.primary.withValues(alpha: 0.08),
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: Text(match.resultDescription!,
@@ -198,7 +451,7 @@ class _MatchCard extends StatelessWidget {
                         fontWeight: FontWeight.w600, fontSize: 12)),
               ),
             ],
-            if (isLive || isCompleted) ...[
+            if (!selectMode && (isLive || isCompleted)) ...[
               const SizedBox(height: 12),
               Row(children: [
                 if (isLive)
@@ -312,20 +565,36 @@ class _ArchiveScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<AppProvider>(builder: (ctx, provider, _) {
-      final matches = provider.archivedMatches;
-      return Scaffold(
-        appBar: AppBar(title: const Text('Archived Matches')),
-        body: matches.isEmpty
-            ? Center(child: Text('No archived matches',
-            style: GoogleFonts.poppins(color: AppTheme.textSecondary)))
-            : ListView.builder(
-          padding: const EdgeInsets.all(12),
-          itemCount: matches.length,
-          itemBuilder: (_, i) =>
-              _MatchCard(match: matches[i], provider: provider),
-        ),
-      );
-    });
+    return Consumer2<AppProvider, TournamentProvider>(
+        builder: (ctx, provider, tProvider, _) {
+          final matches = provider.archivedMatches;
+
+          final Map<String, String> cricketMatchTournamentName = {};
+          for (final t in tProvider.tournaments) {
+            for (final m in t.matches) {
+              if (m.cricketMatchId != null) {
+                cricketMatchTournamentName[m.cricketMatchId!] = t.name;
+              }
+            }
+          }
+
+          return Scaffold(
+            appBar: AppBar(title: const Text('Archived Matches')),
+            body: matches.isEmpty
+                ? Center(child: Text('No archived matches',
+                style: GoogleFonts.poppins(color: AppTheme.textSecondary)))
+                : ListView.builder(
+              padding: const EdgeInsets.all(12),
+              itemCount: matches.length,
+              itemBuilder: (_, i) => _MatchCard(
+                match: matches[i],
+                provider: provider,
+                tournamentName: cricketMatchTournamentName[matches[i].id],
+                onSelect: () {},
+                onLongPress: () {},
+              ),
+            ),
+          );
+        });
   }
 }

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:collection/collection.dart';
 import 'package:flutter/foundation.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:uuid/uuid.dart';
@@ -51,8 +52,12 @@ class TournamentProvider extends ChangeNotifier {
     _box = await Hive.openBox('tournament_data');
     final json = _box.get('tournaments');
     if (json != null) {
-      final list = jsonDecode(json) as List;
-      _tournaments = list.map((t) => Tournament.fromJson(t)).toList();
+      try {
+        final list = jsonDecode(json) as List;
+        _tournaments = list.map((t) => Tournament.fromJson(t)).toList();
+      } catch (_) {
+        _tournaments = [];
+      }
     }
     notifyListeners();
   }
@@ -61,6 +66,10 @@ class TournamentProvider extends ChangeNotifier {
     await _box.put(
         'tournaments',
         jsonEncode(_tournaments.map((t) => t.toJson()).toList()));
+  }
+
+  void _saveAsync() {
+    Future.microtask(() => _save());
   }
 
 
@@ -95,7 +104,7 @@ class TournamentProvider extends ChangeNotifier {
     _generateGroupMatches(tournament);
 
     _tournaments.add(tournament);
-    _save();
+    _saveAsync();
     notifyListeners();
     return tournament;
   }
@@ -199,7 +208,7 @@ class TournamentProvider extends ChangeNotifier {
       }
     }
 
-    _save();
+    _saveAsync();
     notifyListeners();
   }
 
@@ -211,20 +220,12 @@ class TournamentProvider extends ChangeNotifier {
   }) {
     final tournament =
     _tournaments.firstWhere((t) => t.id == tournamentId);
-    final idx = tournament.matches
-        .indexWhere((m) => m.matchId == tournamentMatchId);
-    if (idx >= 0) {
-      final old = tournament.matches[idx];
-      tournament.matches[idx] = TournamentMatch(
-        matchId: cricketMatchId,
-        team1Id: old.team1Id,
-        team2Id: old.team2Id,
-        stage: old.stage,
-        groupName: old.groupName,
-        knockoutRound: old.knockoutRound,
-      );
+    final tMatch = tournament.matches
+        .firstWhereOrNull((m) => m.matchId == tournamentMatchId);
+    if (tMatch != null) {
+      tMatch.cricketMatchId = cricketMatchId;
     }
-    _save();
+    _saveAsync();
     notifyListeners();
   }
 
@@ -289,13 +290,8 @@ class TournamentProvider extends ChangeNotifier {
 
     // Update player stats
     for (final ps in playerMatchStats) {
-      PlayerTournamentStats? existing;
-      try {
-        existing = tournament.playerStats
-            .firstWhere((s) => s.playerId == ps.playerId);
-      } catch (_) {
-        existing = null;
-      }
+      PlayerTournamentStats? existing =
+      tournament.playerStats.firstWhereOrNull((s) => s.playerId == ps.playerId);
 
       if (existing == null) {
         existing = PlayerTournamentStats(
@@ -322,7 +318,7 @@ class TournamentProvider extends ChangeNotifier {
 
     _checkAndAdvanceStage(tournament);
 
-    _save();
+    _saveAsync();
     notifyListeners();
   }
 
@@ -349,7 +345,7 @@ class TournamentProvider extends ChangeNotifier {
             knockoutRound: KnockoutRound.semiFinal,
           ));
         }
-        _save();
+        _saveAsync();
         notifyListeners();
         return;
       }
@@ -370,7 +366,7 @@ class TournamentProvider extends ChangeNotifier {
             knockoutRound: KnockoutRound.final_,
           ));
         }
-        _save();
+        _saveAsync();
         notifyListeners();
         return;
       }
@@ -380,7 +376,7 @@ class TournamentProvider extends ChangeNotifier {
       if (finalDone && tournament.status != TournamentStatus.completed) {
         tournament.status = TournamentStatus.completed;
         tournament.winnerId = tournament.finalMatch!.winnerId;
-        _save();
+        _saveAsync();
         notifyListeners();
       }
       return;
@@ -388,7 +384,7 @@ class TournamentProvider extends ChangeNotifier {
 
     tournament.status = TournamentStatus.knockout;
     _generateKnockoutMatches(tournament);
-    _save();
+    _saveAsync();
     notifyListeners();
   }
 
@@ -449,21 +445,17 @@ class TournamentProvider extends ChangeNotifier {
     tournament.status = TournamentStatus.completed;
     tournament.winnerId = winnerId;
     tournament.manOfTheSeries = manOfTheSeries;
-    _save();
+    _saveAsync();
     notifyListeners();
   }
 
   void deleteTournament(String id) {
     _tournaments.removeWhere((t) => t.id == id);
-    _save();
+    _saveAsync();
     notifyListeners();
   }
 
   Tournament? getTournament(String id) {
-    try {
-      return _tournaments.firstWhere((t) => t.id == id);
-    } catch (_) {
-      return null;
-    }
+    return _tournaments.firstWhereOrNull((t) => t.id == id);
   }
 }

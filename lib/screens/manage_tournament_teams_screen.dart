@@ -60,47 +60,20 @@ class _ManageTournamentTeamsScreenState
 
   // ── Group rename ──
   void _renameGroup(int groupIdx) {
-    final ctrl = TextEditingController(text: _groups[groupIdx].name);
     showDialog(
       context: context,
-      builder: (_) => AlertDialog(
-        title: Text('Rename Group', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
-        content: TextField(
-          controller: ctrl,
-          autofocus: true,
-          textCapitalization: TextCapitalization.characters,
-          maxLength: 5,
-          decoration: const InputDecoration(
-            labelText: 'Group Name',
-            prefixIcon: Icon(Icons.drive_file_rename_outline, color: AppTheme.primary),
-          ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-          ElevatedButton(
-            onPressed: () {
-              final newName = ctrl.text.trim().toUpperCase();
-              if (newName.isEmpty) return;
-              // duplicate check
-              final exists = _groups.any((g) => g.name == newName);
-              if (exists) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Group "$newName" already exists!')),
-                );
-                return;
-              }
-              setState(() {
-                _groups[groupIdx] = _GroupData(
-                  name: newName,
-                  teamIds: _groups[groupIdx].teamIds,
-                );
-                _dirty = true;
-              });
-              Navigator.pop(context);
-            },
-            child: const Text('Rename'),
-          ),
-        ],
+      builder: (_) => _RenameGroupDialog(
+        currentName: _groups[groupIdx].name,
+        existingNames: _groups.map((g) => g.name).toSet(),
+        onRename: (newName) {
+          setState(() {
+            _groups[groupIdx] = _GroupData(
+              name: newName,
+              teamIds: _groups[groupIdx].teamIds,
+            );
+            _dirty = true;
+          });
+        },
       ),
     );
   }
@@ -404,9 +377,9 @@ class _ManageTournamentTeamsScreenState
               margin: const EdgeInsets.fromLTRB(12, 12, 12, 0),
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: AppTheme.primary.withOpacity(0.08),
+                color: AppTheme.primary.withValues(alpha: 0.08),
                 borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: AppTheme.primary.withOpacity(0.2)),
+                border: Border.all(color: AppTheme.primary.withValues(alpha: 0.2)),
               ),
               child: Row(children: [
                 const Icon(Icons.info_outline, color: AppTheme.primary, size: 18),
@@ -522,7 +495,7 @@ class _GroupCard extends StatelessWidget {
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
           decoration: BoxDecoration(
-            color: color.withOpacity(0.1),
+            color: color.withValues(alpha: 0.1),
             borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
           ),
           child: Row(children: [
@@ -537,7 +510,7 @@ class _GroupCard extends StatelessWidget {
                 style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 15, color: color)),
             const SizedBox(width: 6),
             Text('(${group.teamIds.length} teams)',
-                style: TextStyle(fontSize: 12, color: color.withOpacity(0.7))),
+                style: TextStyle(fontSize: 12, color: color.withValues(alpha: 0.7))),
             const Spacer(),
             // Rename
             IconButton(
@@ -577,7 +550,7 @@ class _GroupCard extends StatelessWidget {
               dense: true,
               leading: CircleAvatar(
                 radius: 16,
-                backgroundColor: color.withOpacity(0.15),
+                backgroundColor: color.withValues(alpha: 0.15),
                 child: Text(
                   team.name.isNotEmpty ? team.name[0] : 'T',
                   style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 13),
@@ -647,4 +620,74 @@ class _GroupData {
   String name;
   List<String> teamIds;
   _GroupData({required this.name, required this.teamIds});
+}
+
+// ── Rename Group Dialog — proper dispose সহ ───────────────────────────────────
+class _RenameGroupDialog extends StatefulWidget {
+  final String currentName;
+  final Set<String> existingNames;
+  final void Function(String newName) onRename;
+
+  const _RenameGroupDialog({
+    required this.currentName,
+    required this.existingNames,
+    required this.onRename,
+  });
+
+  @override
+  State<_RenameGroupDialog> createState() => _RenameGroupDialogState();
+}
+
+class _RenameGroupDialogState extends State<_RenameGroupDialog> {
+  late TextEditingController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = TextEditingController(text: widget.currentName);
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: Text('Rename Group',
+        style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+    content: TextField(
+      controller: _ctrl,
+      autofocus: true,
+      textCapitalization: TextCapitalization.characters,
+      maxLength: 5,
+      decoration: const InputDecoration(
+        labelText: 'Group Name',
+        prefixIcon: Icon(Icons.drive_file_rename_outline,
+            color: AppTheme.primary),
+      ),
+    ),
+    actions: [
+      TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel')),
+      ElevatedButton(
+        onPressed: () {
+          final newName = _ctrl.text.trim().toUpperCase();
+          if (newName.isEmpty) return;
+          if (widget.existingNames.contains(newName) &&
+              newName != widget.currentName) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Group "$newName" already exists!')),
+            );
+            return;
+          }
+          widget.onRename(newName);
+          Navigator.pop(context);
+        },
+        child: const Text('Rename'),
+      ),
+    ],
+  );
 }

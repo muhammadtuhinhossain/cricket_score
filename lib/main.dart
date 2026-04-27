@@ -27,11 +27,15 @@ class CricketScorerApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => AppProvider()..loadData()),
         ChangeNotifierProvider(create: (_) => TournamentProvider()..loadData()),
       ],
-      child: MaterialApp(
-        title: 'Cricket Scorer',
-        theme: AppTheme.theme,
-        debugShowCheckedModeBanner: false,
-        home: const HomeScreen(),
+      child: GestureDetector(
+        onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
+        behavior: HitTestBehavior.opaque,
+        child: MaterialApp(
+          title: 'Cricket Scorer',
+          theme: AppTheme.theme,
+          debugShowCheckedModeBanner: false,
+          home: const HomeScreen(),
+        ),
       ),
     );
   }

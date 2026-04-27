@@ -63,116 +63,16 @@ class _CreateTournamentScreenState
 
 
   void _showCreateTeamDialog(BuildContext context, AppProvider aProvider) {
-    final nameCtrl = TextEditingController();
-    int playerCount = 11;
-    final playerCtrls = List<TextEditingController>.generate(
-        11, (i) => TextEditingController(text: 'Player ${i + 1}'));
-
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (_) => StatefulBuilder(
-        builder: (ctx, setModalState) => Padding(
-          padding: EdgeInsets.only(
-            bottom: MediaQuery.of(context).viewInsets.bottom + 16,
-            left: 16,
-            right: 16,
-            top: 16,
-          ),
-          child: SingleChildScrollView(
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              Text('Create New Team',
-                  style: GoogleFonts.poppins(
-                      fontSize: 18, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 16),
-              TextField(
-                controller: nameCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'Team Name',
-                  prefixIcon: Icon(Icons.group, color: AppTheme.primary),
-                ),
-              ),
-              const SizedBox(height: 16),
-              Text('Players',
-                  style: GoogleFonts.poppins(
-                      fontWeight: FontWeight.w600,
-                      color: AppTheme.primary)),
-              const SizedBox(height: 8),
-              // Player count control
-              Row(children: [
-                const Text('Count: ',
-                    style: TextStyle(fontWeight: FontWeight.w500)),
-                IconButton(
-                  icon: const Icon(Icons.remove_circle_outline,
-                      color: AppTheme.primary),
-                  onPressed: playerCount > 1
-                      ? () {
-                    playerCtrls.last.dispose();
-                    playerCtrls.removeLast();
-                    setModalState(() => playerCount--);
-                  }
-                      : null,
-                ),
-                Text('$playerCount',
-                    style: const TextStyle(
-                        fontWeight: FontWeight.bold, fontSize: 16)),
-                IconButton(
-                  icon: const Icon(Icons.add_circle_outline,
-                      color: AppTheme.primary),
-                  onPressed: playerCount < 15
-                      ? () {
-                    playerCtrls.add(TextEditingController(
-                        text: 'Player ${playerCount + 1}'));
-                    setModalState(() => playerCount++);
-                  }
-                      : null,
-                ),
-              ]),
-              const SizedBox(height: 4),
-              ...List.generate(
-                  playerCount,
-                      (i) => Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: TextField(
-                      controller: playerCtrls[i],
-                      decoration: InputDecoration(
-                        labelText: 'Player ${i + 1}',
-                        isDense: true,
-                        prefixIcon: CircleAvatar(
-                          radius: 14,
-                          backgroundColor: AppTheme.primary,
-                          child: Text('${i + 1}',
-                              style: const TextStyle(
-                                  fontSize: 11, color: Colors.white)),
-                        ),
-                      ),
-                    ),
-                  )),
-              const SizedBox(height: 12),
-              ElevatedButton.icon(
-                onPressed: () {
-                  if (nameCtrl.text.trim().isNotEmpty) {
-                    final team = aProvider.createTeam(
-                        nameCtrl.text.trim(),
-                        playerCtrls.map((c) => c.text.trim()).toList());
-                    // new team automatically select
-                    setState(() {
-                      _selectedTeamIds.add(team.id);
-                    });
-                    Navigator.pop(context);
-                  }
-                },
-                icon: const Icon(Icons.check),
-                label: const Text('Create & Add to Tournament'),
-                style: ElevatedButton.styleFrom(
-                    minimumSize: const Size.fromHeight(48)),
-              ),
-              const SizedBox(height: 8),
-            ]),
-          ),
-        ),
+      builder: (_) => _CreateTeamSheet(
+        aProvider: aProvider,
+        onTeamCreated: (teamId) {
+          setState(() => _selectedTeamIds.add(teamId));
+        },
       ),
     );
   }
@@ -425,6 +325,141 @@ class _CreateTournamentScreenState
                         ? FontWeight.w600
                         : FontWeight.normal,
                     fontSize: 12))),
+      ),
+    );
+  }
+}
+
+// ── Create Team Sheet — proper dispose সহ ─────────────────────────────────────
+class _CreateTeamSheet extends StatefulWidget {
+  final AppProvider aProvider;
+  final void Function(String teamId) onTeamCreated;
+
+  const _CreateTeamSheet({
+    required this.aProvider,
+    required this.onTeamCreated,
+  });
+
+  @override
+  State<_CreateTeamSheet> createState() => _CreateTeamSheetState();
+}
+
+class _CreateTeamSheetState extends State<_CreateTeamSheet> {
+  late TextEditingController _nameCtrl;
+  late List<TextEditingController> _playerCtrls;
+  int _playerCount = 11;
+
+  @override
+  void initState() {
+    super.initState();
+    _nameCtrl = TextEditingController();
+    _playerCtrls = List.generate(
+        11, (i) => TextEditingController(text: 'Player ${i + 1}'));
+  }
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    for (final c in _playerCtrls) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(
+        bottom: MediaQuery.of(context).viewInsets.bottom + 16,
+        left: 16,
+        right: 16,
+        top: 16,
+      ),
+      child: SingleChildScrollView(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Text('Create New Team',
+              style: GoogleFonts.poppins(
+                  fontSize: 18, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _nameCtrl,
+            decoration: const InputDecoration(
+              labelText: 'Team Name',
+              prefixIcon: Icon(Icons.group, color: AppTheme.primary),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Text('Players',
+              style: GoogleFonts.poppins(
+                  fontWeight: FontWeight.w600, color: AppTheme.primary)),
+          const SizedBox(height: 8),
+          Row(children: [
+            const Text('Count: ',
+                style: TextStyle(fontWeight: FontWeight.w500)),
+            IconButton(
+              icon: const Icon(Icons.remove_circle_outline,
+                  color: AppTheme.primary),
+              onPressed: _playerCount > 1
+                  ? () {
+                final ctrl = _playerCtrls.removeLast();
+                ctrl.dispose();
+                setState(() => _playerCount--);
+              }
+                  : null,
+            ),
+            Text('$_playerCount',
+                style: const TextStyle(
+                    fontWeight: FontWeight.bold, fontSize: 16)),
+            IconButton(
+              icon: const Icon(Icons.add_circle_outline,
+                  color: AppTheme.primary),
+              onPressed: _playerCount < 15
+                  ? () {
+                _playerCtrls.add(TextEditingController(
+                    text: 'Player ${_playerCount + 1}'));
+                setState(() => _playerCount++);
+              }
+                  : null,
+            ),
+          ]),
+          const SizedBox(height: 4),
+          ...List.generate(
+              _playerCount,
+                  (i) => Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: TextField(
+                  controller: _playerCtrls[i],
+                  decoration: InputDecoration(
+                    labelText: 'Player ${i + 1}',
+                    isDense: true,
+                    prefixIcon: CircleAvatar(
+                      radius: 14,
+                      backgroundColor: AppTheme.primary,
+                      child: Text('${i + 1}',
+                          style: const TextStyle(
+                              fontSize: 11, color: Colors.white)),
+                    ),
+                  ),
+                ),
+              )),
+          const SizedBox(height: 12),
+          ElevatedButton.icon(
+            onPressed: () {
+              if (_nameCtrl.text.trim().isNotEmpty) {
+                final team = widget.aProvider.createTeam(
+                    _nameCtrl.text.trim(),
+                    _playerCtrls.map((c) => c.text.trim()).toList());
+                widget.onTeamCreated(team.id);
+                Navigator.pop(context);
+              }
+            },
+            icon: const Icon(Icons.check),
+            label: const Text('Create & Add to Tournament'),
+            style: ElevatedButton.styleFrom(
+                minimumSize: const Size.fromHeight(48)),
+          ),
+          const SizedBox(height: 8),
+        ]),
       ),
     );
   }
